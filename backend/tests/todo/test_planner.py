@@ -143,6 +143,12 @@ def test_warns_about_deadlines_and_overloaded_days() -> None:
     proposal = check_proposal(plan((due, day(2), "late")), context, tasks)
     assert any("after its deadline" in w for w in proposal.warnings)
 
+    # A deadline that has already passed can't be met by any plan: no warning.
+    missed = task("Missed", day(-1), deadline=day(-2))
+    context = build_context([missed], TODAY, 7, DEFAULT_SCHEDULE, [])
+    proposal = check_proposal(plan((missed, day(0), "asap")), context, [missed])
+    assert not any("after its deadline" in w for w in proposal.warnings)
+
 
 # --- routes --------------------------------------------------------------------------------------
 

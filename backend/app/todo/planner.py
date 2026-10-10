@@ -218,7 +218,9 @@ def check_proposal(plan: ClaudePlan, context: dict[str, Any], tasks: list[Task])
         task = by_id[task_id]
         if task_id not in reasons or to_day == task.planned_date:
             continue
-        if task.deadline and to_day and to_day > task.deadline:
+        # Only deadlines that can still be met: a passed one can't be helped by any plan.
+        today = date.fromisoformat(context["today"])
+        if task.deadline and to_day and task.deadline >= today and to_day > task.deadline:
             warnings.append(f"“{task.title}” lands after its deadline ({task.deadline}).")
         changes.append(
             Change(
