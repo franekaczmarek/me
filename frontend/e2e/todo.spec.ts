@@ -61,3 +61,44 @@ test("a user plans, completes and reschedules tasks", async ({ page, request }) 
     await api.delete(`/todo/tasks/${late.id}`);
   }
 });
+
+test("a user adds a routine that shows up on its days, and sees statistics", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const tag = `e2e-${Date.now()}`;
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const routines = page.getByRole("region", { name: "Routines" });
+    await routines.getByRole("button", { name: /Routines/ }).click();
+    await routines.getByLabel("Routine title").fill(`${tag} stretch`);
+    await routines.getByLabel("Routine duration").selectOption("15m");
+    await routines.getByRole("button", { name: "Add routine" }).click();
+    await expect(routines.getByText(`${tag} stretch`)).toBeVisible();
+    await expect(routines.getByText("Every day · 15m")).toBeVisible();
+
+    // A daily routine appears today and tomorrow.
+    const today = page.getByRole("region", { name: /^Today/ });
+    await expect(today.getByText(`${tag} stretch`)).toBeVisible();
+    await expect(page.getByRole("region", { name: /^Tomorrow/ }).getByText(`${tag} stretch`)).toBeVisible();
+
+    // Doing it today shows up in the statistics.
+    await today.getByRole("checkbox", { name: `Complete ${tag} stretch` }).click();
+    const stats = page.getByRole("region", { name: "Statistics" });
+    await expect(stats.getByText(/\d+%/)).toBeVisible();
+
+    // Pausing removes the upcoming ones (today's done one stays).
+    await routines.getByRole("switch", { name: `${tag} stretch active` }).click();
+    await expect(page.getByRole("region", { name: /^Tomorrow/ }).getByText(`${tag} stretch`)).toBeHidden();
+    await expect(today.getByText(`${tag} stretch`)).toBeVisible();
+
+    await routines.getByRole("button", { name: `Delete ${tag} stretch` }).click();
+    await expect(routines.getByText(`${tag} stretch`)).toBeHidden();
+  } finally {
+    const all: { id: string; title: string }[] = await (await api.get("/todo/routines")).json();
+    for (const r of all.filter((r) => r.title.startsWith(tag))) await api.delete(`/todo/routines/${r.id}?today=${localDay()}`);
+    const feed = await (await api.get(`/todo/days?today=${localDay()}`)).json();
+    const tasks = [...feed.inbox, ...feed.days.flatMap((d: { tasks: unknown[] }) => d.tasks)] as { id: string; title: string }[];
+    for (const t of tasks.filter((t) => t.title.startsWith(tag))) await api.delete(`/todo/tasks/${t.id}`);
+  }
+});

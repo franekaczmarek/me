@@ -11,6 +11,8 @@ const todoApi = vi.hoisted(() => ({
   completeTask: vi.fn(),
   reopenTask: vi.fn(),
   deleteTask: vi.fn(),
+  stats: vi.fn(),
+  routines: vi.fn(),
 }));
 vi.mock("@/lib/todo/api", () => ({ todoApi, localToday: () => "2026-03-04" }));
 
@@ -64,6 +66,11 @@ const card = (name: RegExp) => screen.getByRole("region", { name });
 
 beforeEach(() => {
   todoApi.days.mockResolvedValue(feed);
+  todoApi.routines.mockResolvedValue([]);
+  todoApi.stats.mockResolvedValue({
+    days: 30, done: 0, on_time: 0, late: 0, overdue: 0, missed: 0,
+    on_time_rate: null, avg_postponed: null, streak: 0, last_week: [],
+  });
   for (const fn of [todoApi.createTask, todoApi.updateTask, todoApi.completeTask, todoApi.reopenTask, todoApi.deleteTask]) {
     fn.mockResolvedValue(undefined);
   }
@@ -92,6 +99,8 @@ describe("TodoModule", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "Reopen Reply to Anna" }));
     expect(todoApi.reopenTask).toHaveBeenCalledWith("done");
     expect(todoApi.days).toHaveBeenCalledTimes(3);
+    // Statistics reload with every change.
+    expect(todoApi.stats.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
   it("moves overdue tasks to today or the inbox", async () => {

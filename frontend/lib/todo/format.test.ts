@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, dayTitle, daysBetween, deadlineLabel, formatMinutes } from "./format";
+import { addDays, dayTitle, daysBetween, deadlineLabel, describeRule, formatMinutes } from "./format";
 
 const TODAY = "2026-03-04"; // Wednesday
 
@@ -30,5 +30,16 @@ describe("to-do formatting", () => {
     expect(addDays("2026-02-27", 3)).toBe("2026-03-02");
     expect(addDays(TODAY, -4)).toBe("2026-02-28");
     expect(daysBetween("2026-02-27", "2026-03-02")).toBe(3);
+  });
+
+  it("describes routine rules", () => {
+    const rule = (kind: string, extra = {}) => ({ kind, weekdays: null, interval_days: null, month_day: null, ...extra });
+    expect(describeRule(rule("daily"))).toBe("Every day");
+    expect(describeRule(rule("weekdays"))).toBe("Weekdays");
+    expect(describeRule(rule("weekly", { weekdays: [1, 3, 7] }))).toBe("Mon, Wed, Sun");
+    expect(describeRule(rule("interval", { interval_days: 3 }))).toBe("Every 3 days");
+    expect(describeRule(rule("monthly", { month_day: 1 }))).toBe("Monthly on the 1st");
+    expect(describeRule(rule("monthly", { month_day: 12 }))).toBe("Monthly on the 12th");
+    expect(describeRule(rule("monthly", { month_day: 23 }))).toBe("Monthly on the 23rd");
   });
 });

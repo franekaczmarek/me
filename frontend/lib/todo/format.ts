@@ -48,3 +48,21 @@ export function addDays(value: string, days: number): string {
   const pad = (n: number, w = 2) => String(n).padStart(w, "0");
   return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** "Every day", "Weekdays", "Mon, Wed", "Every 3 days", "Monthly on the 15th". */
+export function describeRule(rule: {
+  kind: string;
+  weekdays: number[] | null;
+  interval_days: number | null;
+  month_day: number | null;
+}): string {
+  if (rule.kind === "daily") return "Every day";
+  if (rule.kind === "weekdays") return "Weekdays";
+  if (rule.kind === "weekly") return (rule.weekdays ?? []).map((d) => WEEKDAY_SHORT[d - 1]).join(", ");
+  if (rule.kind === "interval") return rule.interval_days === 1 ? "Every day" : `Every ${rule.interval_days} days`;
+  const n = rule.month_day ?? 1;
+  const suffix = n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th";
+  return `Monthly on the ${n}${suffix}`;
+}

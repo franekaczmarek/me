@@ -41,3 +41,38 @@ export type TaskInput = Pick<
   Task,
   "title" | "notes" | "planned_date" | "deadline" | "duration_min" | "priority" | "fixed_day"
 >;
+
+export type DayStats = { date: string; on_time: number; late: number; missed: number };
+
+export type Stats = {
+  days: number;
+  done: number;
+  on_time: number;
+  late: number;
+  overdue: number;
+  missed: number;
+  on_time_rate: number | null;
+  avg_postponed: number | null;
+  streak: number;
+  last_week: DayStats[];
+};
+
+export type RoutineKind = "daily" | "weekdays" | "weekly" | "interval" | "monthly";
+
+export type Routine = {
+  id: string;
+  title: string;
+  notes: string;
+  kind: RoutineKind;
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  weekdays: number[] | null;
+  interval_days: number | null;
+  month_day: number | null;
+  duration_min: number | null;
+  priority: Priority;
+  active: boolean;
+  starts_on: string;
+  created_at: string;
+};
+
+export type RoutineInput = Pick<Routine, "title" | "kind" | "weekdays" | "interval_days" | "month_day" | "duration_min" | "priority">;

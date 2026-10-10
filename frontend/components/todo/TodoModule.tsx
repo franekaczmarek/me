@@ -6,6 +6,8 @@ import { todoApi } from "@/lib/todo/api";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
 import { QuickAdd } from "./QuickAdd";
+import { RoutinesCard } from "./RoutinesCard";
+import { StatsCard } from "./StatsCard";
 import { TaskForm } from "./TaskForm";
 import { TaskRow } from "./TaskRow";
 
@@ -17,10 +19,19 @@ export function TodoModule() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [attempt, setAttempt] = useState(0);
+  // Bumped after every change so the statistics reload too.
+  const [version, setVersion] = useState(0);
   const todayRef = useRef<HTMLElement>(null);
   const centred = useRef(false);
 
-  const reload = useCallback(() => todoApi.days().then(setFeed), []);
+  const reload = useCallback(
+    () =>
+      todoApi.days().then((f) => {
+        setFeed(f);
+        setVersion((v) => v + 1);
+      }),
+    [],
+  );
 
   useEffect(() => {
     reload().catch((e: Error) => setError(`Could not load your tasks: ${e.message}`));
@@ -136,6 +147,8 @@ export function TodoModule() {
           </aside>
         ) : null}
 
+        <StatsCard version={version} />
+
         <section
           aria-label="Inbox"
           className="rounded-3xl border border-stone-100 bg-white p-4 shadow-[0_8px_30px_rgba(120,100,80,0.06)] dark:border-zinc-800 dark:bg-zinc-900"
@@ -153,6 +166,8 @@ export function TodoModule() {
           )}
           <QuickAdd label="Add a task to the inbox" onAdd={(title) => add(title, null)} />
         </section>
+
+        <RoutinesCard onChanged={() => reload().catch(() => {})} />
       </div>
     </div>
   );
