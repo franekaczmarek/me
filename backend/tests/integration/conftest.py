@@ -96,7 +96,14 @@ def cleanup(request: pytest.FixtureRequest) -> Iterator[None]:
     if "supa" not in request.fixturenames:
         return
     supa: Supa = request.getfixturevalue("supa")
-    for table in ("timeline_events", "timeline_categories"):
+    for table in (
+        "timeline_events",
+        "timeline_categories",
+        "todo_tasks",
+        "todo_routines",
+        "calendar_days_off",
+        "calendar_work_schedule",
+    ):
         supa.rest("DELETE", table, params={"user_id": f"eq.{supa.user_id}"})
 
 
