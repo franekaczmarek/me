@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineItem } from "@/lib/timeline/items";
@@ -6,15 +6,26 @@ import type { Category, TimelineEvent } from "@/lib/timeline/types";
 import { TimelineModule } from "./TimelineModule";
 
 const mocks = vi.hoisted(() => ({
-  timelineApi: { listEvents: vi.fn(), listCategories: vi.fn() },
+  timelineApi: {
+    listEvents: vi.fn(),
+    listCategories: vi.fn(),
+    createEvent: vi.fn(),
+    updateEvent: vi.fn(),
+    deleteEvent: vi.fn(),
+  },
   profileApi: { get: vi.fn() },
   viewProps: vi.fn(),
 }));
 vi.mock("@/lib/timeline/api", () => ({ timelineApi: mocks.timelineApi, profileApi: mocks.profileApi }));
 
-// Stand-in for the vis-timeline view: one button per item.
+// Stand-in for the vis-timeline view: one button per item, plus a "double-click" spot.
 vi.mock("./TimelineView", () => ({
-  TimelineView: (props: { items: TimelineItem[]; onSelect: (id: string | null) => void; home: unknown }) => {
+  TimelineView: (props: {
+    items: TimelineItem[];
+    onSelect: (id: string | null) => void;
+    onAdd: (start: string) => void;
+    home: unknown;
+  }) => {
     mocks.viewProps(props);
     return (
       <div data-testid="timeline">
@@ -23,6 +34,7 @@ vi.mock("./TimelineView", () => ({
             {i.title}
           </button>
         ))}
+        <button onClick={() => props.onAdd("2020-05-17")}>double-click 2020-05-17</button>
       </div>
     );
   },
@@ -80,8 +92,96 @@ describe("TimelineModule", () => {
     expect(details).toHaveTextContent("School");
     expect(details).toHaveTextContent("Class 3B");
 
-    await userEvent.click(screen.getByRole("button", { name: "Close details" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
     expect(screen.queryByRole("complementary", { name: "Event details" })).not.toBeInTheDocument();
+  });
+
+  it("adds an event and selects it", async () => {
+    const created = { ...events[1], id: "e3", title: "Moved to Kraków", start: "2012", end: null };
+    mocks.timelineApi.createEvent.mockResolvedValue(created);
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add event" }));
+    const panel = screen.getByRole("complementary", { name: "New event" });
+    await userEvent.type(within(panel).getByLabelText("Title"), "Moved to Kraków");
+    await userEvent.type(within(panel).getByLabelText("Date year"), "2012");
+    await userEvent.click(within(panel).getByRole("button", { name: "Add event" }));
+
+    expect(mocks.timelineApi.createEvent).toHaveBeenCalledWith({
+      title: "Moved to Kraków",
+      description: "",
+      start: "2012",
+      end: null,
+      category_id: null,
+    });
+    expect(await screen.findByRole("complementary", { name: "Event details" })).toHaveTextContent("Moved to Kraków");
+    expect(screen.getByRole("button", { name: "Moved to Kraków" })).toBeInTheDocument();
+  });
+
+  it("starts a new event on the double-clicked day", async () => {
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "double-click 2020-05-17" }));
+    const panel = screen.getByRole("complementary", { name: "New event" });
+    expect(within(panel).getByLabelText("Date year")).toHaveValue("2020");
+    expect(within(panel).getByLabelText("Date month")).toHaveValue("5");
+    expect(within(panel).getByLabelText("Date day")).toHaveValue("17");
+  });
+
+  it("edits an event", async () => {
+    mocks.timelineApi.updateEvent.mockResolvedValue({ ...events[0], title: "Secondary school" });
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "High school" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const panel = screen.getByRole("complementary", { name: "Edit event" });
+    const title = within(panel).getByLabelText("Title");
+    expect(title).toHaveValue("High school");
+    await userEvent.clear(title);
+    await userEvent.type(title, "Secondary school");
+    await userEvent.click(within(panel).getByRole("button", { name: "Save changes" }));
+
+    expect(mocks.timelineApi.updateEvent).toHaveBeenCalledWith("e1", {
+      title: "Secondary school",
+      description: "Class 3B",
+      start: "2006",
+      end: "2009-06",
+      category_id: "c1",
+    });
+    expect(await screen.findByRole("complementary", { name: "Event details" })).toHaveTextContent("Secondary school");
+  });
+
+  it("cancelling an edit goes back to the details", async () => {
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "High school" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("complementary", { name: "Event details" })).toBeInTheDocument();
+    expect(mocks.timelineApi.updateEvent).not.toHaveBeenCalled();
+  });
+
+  it("deletes an event after confirmation", async () => {
+    mocks.timelineApi.deleteEvent.mockResolvedValue(undefined);
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "High school" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    expect(screen.getByText("Delete this event and its photos?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(mocks.timelineApi.deleteEvent).toHaveBeenCalledWith("e1");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "High school" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  });
+
+  it("keeps the event when deletion is cancelled or fails", async () => {
+    mocks.timelineApi.deleteEvent.mockRejectedValue(new Error("Database unavailable"));
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "High school" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(mocks.timelineApi.deleteEvent).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Database unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "High school" })).toBeInTheDocument();
   });
 
   it("shows an empty state", async () => {

@@ -62,3 +62,37 @@ export function initialWindow(birthDate: string | null, today: Date = new Date()
   }
   return { start: localDate(year - 5, 0, 1), end: localDate(year + 5, 0, 1) };
 }
+
+export type DateParts = { year: string; month: string; day: string };
+
+export function toParts(value: PartialDate | null): DateParts {
+  const [year = "", month = "", day = ""] = value ? value.split("-") : [];
+  return { year: year.replace(/^0+(?=\d)/, ""), month: month.replace(/^0/, ""), day: day.replace(/^0/, "") };
+}
+
+/** Builds "YYYY", "YYYY-MM" or "YYYY-MM-DD" from form fields; throws a readable error. */
+export function fromParts({ year, month, day }: DateParts): PartialDate {
+  const y = Number(year);
+  if (!year.trim() || !Number.isInteger(y) || y < 1 || y > 9999) throw new Error("Enter a year between 1 and 9999.");
+  const yyyy = String(y).padStart(4, "0");
+  if (!month) {
+    if (day) throw new Error("Choose a month for the day.");
+    return yyyy;
+  }
+  const mm = month.padStart(2, "0");
+  if (!day) return `${yyyy}-${mm}`;
+  const d = Number(day);
+  if (d > daysInMonth(y, Number(month))) throw new Error(`${formatPartialDate(`${yyyy}-${mm}`)} has no day ${d}.`);
+  return `${yyyy}-${mm}-${day.padStart(2, "0")}`;
+}
+
+/** `month` is 1–12. Day 0 of the next month is the last day of this one. */
+export function daysInMonth(year: number, month: number): number {
+  return localDate(year, month, 0).getDate();
+}
+
+/** Full-day partial date for a moment on the timeline (e.g. a double click). */
+export function dayOf(date: Date): PartialDate {
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

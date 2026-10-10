@@ -45,9 +45,12 @@ const item = (id: string): TimelineItem => ({
 
 async function renderView(props: Partial<React.ComponentProps<typeof TimelineView>> = {}) {
   const onSelect = vi.fn();
-  const view = render(<TimelineView items={[item("a")]} home={home} selectedId={null} onSelect={onSelect} {...props} />);
+  const onAdd = vi.fn();
+  const view = render(
+    <TimelineView items={[item("a")]} home={home} selectedId={null} onSelect={onSelect} onAdd={onAdd} {...props} />,
+  );
   await waitFor(() => expect(vis.instances).toHaveLength(1));
-  return { ...view, onSelect, timeline: vis.instances[0] };
+  return { ...view, onSelect, onAdd, timeline: vis.instances[0] };
 }
 
 beforeEach(() => {
@@ -66,7 +69,7 @@ describe("TimelineView", () => {
     const onSelect = vi.fn();
     const view = (mode: "visible" | "hidden") => (
       <Activity mode={mode}>
-        <TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} />
+        <TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} onAdd={vi.fn()} />
       </Activity>
     );
     const { rerender } = render(view("visible"));
@@ -83,8 +86,8 @@ describe("TimelineView", () => {
     const { timeline, rerender, onSelect } = await renderView();
     const newHome = { start: new Date(1960, 0, 1), end: new Date(2030, 0, 1) };
     // Same window, new objects: no jump.
-    rerender(<TimelineView items={[item("a")]} home={{ ...home }} selectedId={null} onSelect={onSelect} />);
-    rerender(<TimelineView items={[item("a")]} home={newHome} selectedId={null} onSelect={onSelect} />);
+    rerender(<TimelineView items={[item("a")]} home={{ ...home }} selectedId={null} onSelect={onSelect} onAdd={vi.fn()} />);
+    rerender(<TimelineView items={[item("a")]} home={newHome} selectedId={null} onSelect={onSelect} onAdd={vi.fn()} />);
     await waitFor(() => expect(timeline.setWindow).toHaveBeenCalledTimes(1));
     expect(timeline.setWindow).toHaveBeenCalledWith(newHome.start.getTime(), newHome.end.getTime());
   });
@@ -99,9 +102,17 @@ describe("TimelineView", () => {
 
   it("pushes new items and the selection to the timeline", async () => {
     const { timeline, rerender, onSelect } = await renderView();
-    rerender(<TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} />);
+    rerender(<TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} onAdd={vi.fn()} />);
     await waitFor(() => expect(timeline.setItems).toHaveBeenLastCalledWith([item("a"), item("b")]));
     expect(timeline.setSelection).toHaveBeenLastCalledWith(["b"]);
+  });
+
+  it("asks to add an event when an empty spot is double-clicked", async () => {
+    const { timeline, onAdd } = await renderView();
+    timeline.handlers.doubleClick({ item: "a", time: new Date(2015, 5, 7) });
+    expect(onAdd).not.toHaveBeenCalled();
+    timeline.handlers.doubleClick({ item: null, time: new Date(2015, 5, 7, 18) });
+    expect(onAdd).toHaveBeenCalledWith("2015-06-07");
   });
 
   it("has Home, Today and Fit all controls", async () => {

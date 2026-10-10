@@ -1,29 +1,38 @@
+"use client";
+
+import { useState } from "react";
+import { Message } from "@/components/ui";
 import { formatSpan } from "@/lib/timeline/dates";
 import type { Category, TimelineEvent } from "@/lib/timeline/types";
 
 type Props = {
   event: TimelineEvent;
   category?: Category;
-  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
 };
 
-export function EventDetails({ event, category, onClose }: Props) {
+const secondaryButton = "rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800";
+
+export function EventDetails({ event, category, onEdit, onDelete }: Props) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function confirmDelete() {
+    setError(null);
+    setPending(true);
+    try {
+      await onDelete();
+    } catch (err) {
+      setError((err as Error).message);
+      setPending(false);
+    }
+  }
+
   return (
-    <aside
-      aria-label="Event details"
-      className="flex w-full flex-col gap-3 border-t border-zinc-200 p-4 md:w-96 md:border-t-0 md:border-l dark:border-zinc-800"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="text-lg font-semibold break-words">{event.title}</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close details"
-          className="rounded-md px-2 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          ×
-        </button>
-      </div>
+    <div className="flex flex-col gap-3">
+      <h2 className="text-lg font-semibold break-words">{event.title}</h2>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{formatSpan(event.start, event.end)}</p>
       {category && (
         <p className="flex items-center gap-2 text-sm">
@@ -32,6 +41,32 @@ export function EventDetails({ event, category, onClose }: Props) {
         </p>
       )}
       {event.description && <p className="text-sm whitespace-pre-wrap">{event.description}</p>}
-    </aside>
+      {error && <Message kind="error">{error}</Message>}
+      {confirming ? (
+        <div className="flex items-center gap-2 text-sm">
+          <span>Delete this event and its photos?</span>
+          <button
+            type="button"
+            onClick={confirmDelete}
+            disabled={pending}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-white hover:bg-red-500 disabled:opacity-50"
+          >
+            {pending ? "Deleting…" : "Delete"}
+          </button>
+          <button type="button" onClick={() => setConfirming(false)} disabled={pending} className={secondaryButton}>
+            Keep
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button type="button" onClick={onEdit} className={secondaryButton}>
+            Edit
+          </button>
+          <button type="button" onClick={() => setConfirming(true)} className={secondaryButton}>
+            Delete…
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

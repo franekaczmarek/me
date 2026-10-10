@@ -3,7 +3,9 @@
 import "vis-timeline/styles/vis-timeline-graph2d.min.css";
 import { useEffect, useRef, useState } from "react";
 import type { Timeline, TimelineOptions } from "vis-timeline/standalone";
+import { dayOf } from "@/lib/timeline/dates";
 import type { TimelineItem } from "@/lib/timeline/items";
+import type { PartialDate } from "@/lib/timeline/types";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -28,18 +30,20 @@ type Props = {
   home: { start: Date; end: Date };
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** Double click on an empty spot: add an event on that day. */
+  onAdd: (start: PartialDate) => void;
 };
 
 /** Zoomable, pannable timeline (vis-timeline), loaded in the browser only. */
-export function TimelineView({ items, home, selectedId, onSelect }: Props) {
+export function TimelineView({ items, home, selectedId, onSelect, onAdd }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<Timeline | null>(null);
-  const latest = useRef({ items, home, selectedId, onSelect });
+  const latest = useRef({ items, home, selectedId, onSelect, onAdd });
   const shownHome = useRef(home);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    latest.current = { items, home, selectedId, onSelect };
+    latest.current = { items, home, selectedId, onSelect, onAdd };
   });
 
   // Create the timeline. Also re-runs when Next.js shows a preserved (hidden) route
@@ -53,6 +57,9 @@ export function TimelineView({ items, home, selectedId, onSelect }: Props) {
       timeline = new Timeline(containerRef.current, items, { ...OPTIONS, ...home });
       timeline.setSelection(selectedId ? [selectedId] : []);
       timeline.on("select", ({ items }: { items: string[] }) => latest.current.onSelect(items[0] ?? null));
+      timeline.on("doubleClick", ({ item, time }: { item: string | null; time: Date }) => {
+        if (!item && time) latest.current.onAdd(dayOf(time));
+      });
       shownHome.current = home;
       timelineRef.current = timeline;
       setReady(true);
