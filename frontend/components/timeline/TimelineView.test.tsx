@@ -15,6 +15,7 @@ const vis = vi.hoisted(() => {
     setWindow = vi.fn();
     moveTo = vi.fn();
     fit = vi.fn();
+    redraw = vi.fn();
     destroy = vi.fn();
     constructor(
       public container: HTMLElement,
@@ -26,10 +27,13 @@ const vis = vi.hoisted(() => {
     on(event: string, handler: (props: unknown) => void) {
       this.handlers[event] = handler;
     }
+    off(event: string) {
+      delete this.handlers[event];
+    }
   }
   return { instances, FakeTimeline };
 });
-vi.mock("vis-timeline/standalone", () => ({ Timeline: vis.FakeTimeline }));
+vi.mock("@/lib/timeline/vis", () => ({ loadVis: async () => ({ Timeline: vis.FakeTimeline }) }));
 vi.mock("vis-timeline/styles/vis-timeline-graph2d.min.css", () => ({}));
 
 const home = { start: new Date(1988, 0, 1), end: new Date(2029, 0, 1) };
@@ -90,6 +94,14 @@ describe("TimelineView", () => {
     rerender(<TimelineView items={[item("a")]} home={newHome} selectedId={null} onSelect={onSelect} onAdd={vi.fn()} />);
     await waitFor(() => expect(timeline.setWindow).toHaveBeenCalledTimes(1));
     expect(timeline.setWindow).toHaveBeenCalledWith(newHome.start.getTime(), newHome.end.getTime());
+  });
+
+  it("redraws right after the first range change so it shows up without delay", async () => {
+    const { timeline } = await renderView();
+    expect(timeline.redraw).not.toHaveBeenCalled();
+    timeline.handlers.rangechanged({});
+    expect(timeline.redraw).toHaveBeenCalledTimes(1);
+    expect(timeline.handlers.rangechanged).toBeUndefined();
   });
 
   it("reports selection changes", async () => {

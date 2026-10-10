@@ -27,14 +27,22 @@ _INVALID_INPUT_CODES = {
 }
 
 
+CONNECT_RETRIES = 3
+
+
 @lru_cache
 def get_http_client() -> httpx.Client:
     settings = get_settings()
     return httpx.Client(
         base_url=settings.supabase_url,
         headers={"apikey": settings.supabase_anon_key},
-        # certifi's CA bundle: the system one is missing on some setups.
-        verify=ssl.create_default_context(cafile=certifi.where()),
+        # Retries only failed connection attempts (e.g. a DNS hiccup), so it never
+        # repeats a request that reached the server. certifi's CA bundle: the
+        # system one is missing on some setups.
+        transport=httpx.HTTPTransport(
+            retries=CONNECT_RETRIES,
+            verify=ssl.create_default_context(cafile=certifi.where()),
+        ),
         timeout=15,
     )
 

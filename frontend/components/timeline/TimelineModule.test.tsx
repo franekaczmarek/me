@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
   },
   profileApi: { get: vi.fn() },
   viewProps: vi.fn(),
+  loadVis: vi.fn(),
 }));
+vi.mock("@/lib/timeline/vis", () => ({ loadVis: mocks.loadVis }));
 vi.mock("@/lib/timeline/api", () => ({ timelineApi: mocks.timelineApi, profileApi: mocks.profileApi }));
 vi.mock("@/lib/supabase", async () => ({ supabase: (await import("@/test/mocks")).supabaseMock }));
 
@@ -63,6 +65,7 @@ const events: TimelineEvent[] = [
 beforeEach(() => {
   mocks.timelineApi.listEvents.mockResolvedValue(events);
   mocks.timelineApi.listMedia.mockResolvedValue([]);
+  mocks.loadVis.mockResolvedValue({});
   mocks.timelineApi.listCategories.mockResolvedValue([school]);
   mocks.profileApi.get.mockResolvedValue({ display_name: null, birth_date: "1990-03-04" });
 });
@@ -73,6 +76,12 @@ describe("TimelineModule", () => {
     expect(screen.getByText("Loading timeline…")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "High school" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Born" })).toBeInTheDocument();
+  });
+
+  it("starts loading the timeline library together with the data", () => {
+    render(<TimelineModule />);
+    expect(mocks.loadVis).toHaveBeenCalled();
+    expect(mocks.timelineApi.listEvents).toHaveBeenCalled();
   });
 
   it("opens on the user's life when the birth date is known", async () => {
@@ -229,9 +238,14 @@ describe("TimelineModule", () => {
     expect(await screen.findByText(/No events yet/)).toBeInTheDocument();
   });
 
-  it("shows an error when loading fails", async () => {
-    mocks.timelineApi.listEvents.mockRejectedValue(new Error("Database unavailable"));
+  it("shows an error when loading fails and retries without a page refresh", async () => {
+    mocks.timelineApi.listEvents.mockRejectedValueOnce(new Error("Database unavailable"));
     render(<TimelineModule />);
     expect(await screen.findByText("Could not load the timeline: Database unavailable")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "High school" })).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument();
+    expect(mocks.timelineApi.listEvents).toHaveBeenCalledTimes(2);
   });
 });

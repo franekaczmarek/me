@@ -6,6 +6,7 @@ import { Button, Message } from "@/components/ui";
 import { profileApi, timelineApi } from "@/lib/timeline/api";
 import { initialWindow } from "@/lib/timeline/dates";
 import { toItems } from "@/lib/timeline/items";
+import { loadVis } from "@/lib/timeline/vis";
 import type { Category, EventInput, PartialDate, Profile, TimelineEvent } from "@/lib/timeline/types";
 import { CategoryManager } from "./CategoryManager";
 import { EventDetails } from "./EventDetails";
@@ -28,19 +29,33 @@ export function TimelineModule() {
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
 
+  // Bumped by "Try again" to reload without refreshing the page.
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
+    // The timeline library is big: fetch it while the data loads, not after.
+    loadVis().catch(() => {});
     Promise.all([timelineApi.listEvents(), timelineApi.listCategories(), profileApi.get()])
       .then(([events, categories, profile]) => setData({ events, categories, profile }))
       .catch((e: Error) => setError(`Could not load the timeline: ${e.message}`));
-  }, []);
+  }, [attempt]);
 
   const items = useMemo(() => (data ? toItems(data.events, data.categories) : []), [data]);
   const home = useMemo(() => initialWindow(data?.profile.birth_date ?? null), [data?.profile.birth_date]);
 
   if (error) {
     return (
-      <div className="p-6">
+      <div className="flex flex-col items-start gap-3 p-6">
         <Message kind="error">{error}</Message>
+        <Button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </Button>
       </div>
     );
   }

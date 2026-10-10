@@ -4,6 +4,7 @@ import "vis-timeline/styles/vis-timeline-graph2d.min.css";
 import { useEffect, useRef, useState } from "react";
 import type { Timeline, TimelineOptions } from "vis-timeline/standalone";
 import { dayOf } from "@/lib/timeline/dates";
+import { loadVis } from "@/lib/timeline/vis";
 import type { TimelineItem } from "@/lib/timeline/items";
 import type { PartialDate } from "@/lib/timeline/types";
 
@@ -51,11 +52,18 @@ export function TimelineView({ items, home, selectedId, onSelect, onAdd }: Props
   useEffect(() => {
     let cancelled = false;
     let timeline: Timeline | null = null;
-    import("vis-timeline/standalone").then(({ Timeline }) => {
+    loadVis().then(({ Timeline }) => {
       if (cancelled || !containerRef.current) return;
       const { items, home, selectedId } = latest.current;
       timeline = new Timeline(containerRef.current, items, { ...OPTIONS, ...home });
       timeline.setSelection(selectedId ? [selectedId] : []);
+      // vis-timeline stays hidden until it redraws after its first range change, and
+      // that redraw would only come with the next clock tick (~1 s later).
+      const reveal = () => {
+        timeline?.off("rangechanged", reveal);
+        timeline?.redraw();
+      };
+      timeline.on("rangechanged", reveal);
       timeline.on("select", ({ items }: { items: string[] }) => latest.current.onSelect(items[0] ?? null));
       timeline.on("doubleClick", ({ item, time }: { item: string | null; time: Date }) => {
         if (!item && time) latest.current.onAdd(dayOf(time));
