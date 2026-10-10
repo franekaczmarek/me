@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
 
+    # Claude API key for the to-do planner; the planner is unavailable without it.
+    anthropic_api_key: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

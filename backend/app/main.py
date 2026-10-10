@@ -6,6 +6,7 @@ from app.calendar.router import router as calendar_router
 from app.routers import profile, users
 from app.timeline.media import router as timeline_media_router
 from app.timeline.router import router as timeline_router
+from app.todo.planner import router as todo_planner_router
 from app.todo.routines import router as todo_routines_router
 from app.todo.router import router as todo_router
 
@@ -27,6 +28,7 @@ app.include_router(timeline_router)
 app.include_router(timeline_media_router)
 app.include_router(todo_router)
 app.include_router(todo_routines_router)
+app.include_router(todo_planner_router)
 app.include_router(calendar_router)
 
 

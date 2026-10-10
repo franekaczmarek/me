@@ -6,6 +6,7 @@ import { todoApi } from "@/lib/todo/api";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
 import { DragProvider, DropZone, INBOX } from "./dnd";
+import { PlanDialog } from "./PlanDialog";
 import { QuickAdd } from "./QuickAdd";
 import { RoutinesCard } from "./RoutinesCard";
 import { StatsCard } from "./StatsCard";
@@ -22,6 +23,7 @@ export function TodoModule() {
   const [attempt, setAttempt] = useState(0);
   // Bumped after every change so the statistics reload too.
   const [version, setVersion] = useState(0);
+  const [planning, setPlanning] = useState(false);
   const todayRef = useRef<HTMLElement>(null);
   const centred = useRef(false);
 
@@ -102,6 +104,13 @@ export function TodoModule() {
             >
               Add task
             </button>
+            <button
+              type="button"
+              onClick={() => setPlanning(true)}
+              className="rounded-full border border-stone-200 bg-white px-5 py-2 text-sm font-medium text-stone-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            >
+              ✨ Plan with Claude
+            </button>
             {actionError && <Message kind="error">{actionError}</Message>}
           </div>
           <div className="flex flex-col gap-4 md:max-h-[calc(100vh-11rem)] md:overflow-y-auto md:px-1 md:py-2" data-testid="day-list">
@@ -173,6 +182,9 @@ export function TodoModule() {
           <RoutinesCard onChanged={() => reload().catch(() => {})} />
         </div>
       </div>
+      {planning && (
+        <PlanDialog today={feed.today} onClose={() => setPlanning(false)} onApplied={() => reload().catch(() => {})} />
+      )}
     </DragProvider>
   );
 }

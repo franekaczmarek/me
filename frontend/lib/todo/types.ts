@@ -76,3 +76,20 @@ export type Routine = {
 };
 
 export type RoutineInput = Pick<Routine, "title" | "kind" | "weekdays" | "interval_days" | "month_day" | "duration_min" | "priority">;
+
+export type PlanChange = {
+  task_id: string;
+  title: string;
+  from_date: string | null;
+  to_date: string | null;
+  order: number;
+  duration_min: number | null;
+  reason: string;
+};
+
+export type Proposal = {
+  summary: string;
+  changes: PlanChange[];
+  warnings: string[];
+  days: { date: string; capacity_min: number; planned_min: number }[];
+};

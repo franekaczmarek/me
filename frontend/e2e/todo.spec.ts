@@ -138,3 +138,42 @@ test("a user drags tasks between the inbox and the days", async ({ page, request
     await api.delete(`/todo/tasks/${task.id}`);
   }
 });
+
+test("a user reviews Claude's plan and applies part of it", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const tag = `e2e-${Date.now()}`;
+  const passport = await (await api.post("/todo/tasks", { title: `${tag} passport`, duration_min: 60 })).json();
+  const photos = await (await api.post("/todo/tasks", { title: `${tag} photos` })).json();
+
+  // The proposal itself is canned (a live Claude call costs money); applying it runs on the real stack.
+  await page.route("**/todo/plan", (route) =>
+    route.fulfill({
+      json: {
+        summary: "Passport tomorrow; photos can wait.",
+        warnings: [],
+        changes: [
+          { task_id: passport.id, title: passport.title, from_date: null, to_date: localDay(1), order: 0, duration_min: 60, reason: "Needs doing soon" },
+          { task_id: photos.id, title: photos.title, from_date: null, to_date: localDay(2), order: 0, duration_min: null, reason: "Light day" },
+        ],
+        days: [],
+      },
+    }),
+  );
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    await page.getByRole("button", { name: "✨ Plan with Claude" }).click();
+    const dialog = page.getByRole("dialog", { name: "Plan with Claude" });
+    await expect(dialog.getByText("Passport tomorrow; photos can wait.")).toBeVisible();
+    await dialog.getByRole("checkbox", { name: new RegExp(`${tag} photos`) }).uncheck();
+    await dialog.getByRole("button", { name: "Apply 1 change" }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByRole("region", { name: /^Tomorrow/ }).getByText(`${tag} passport`)).toBeVisible();
+    await expect(page.getByRole("region", { name: "Inbox" }).getByText(`${tag} photos`)).toBeVisible();
+  } finally {
+    await api.delete(`/todo/tasks/${passport.id}`);
+    await api.delete(`/todo/tasks/${photos.id}`);
+  }
+});
