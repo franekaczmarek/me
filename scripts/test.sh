@@ -8,7 +8,11 @@ cd "$(dirname "$0")/.."
 step() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
 step "Backend unit tests (pytest)"
-(cd backend && .venv/bin/pytest -q -p no:warnings)
+if [[ "${1:-}" == "--fast" ]]; then
+  (cd backend && .venv/bin/pytest -q -p no:warnings -m "not integration")
+else
+  (cd backend && .venv/bin/pytest -q -p no:warnings)
+fi
 
 step "Frontend lint"
 (cd frontend && npm run --silent lint)
