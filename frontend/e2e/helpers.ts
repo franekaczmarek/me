@@ -35,6 +35,7 @@ export async function apiClient(page: Page, request: APIRequestContext) {
     get: (path: string) => request.get(`${API_URL}${path}`, { headers }),
     post: (path: string, data: object) => request.post(`${API_URL}${path}`, { headers, data }),
     patch: (path: string, data: object) => request.patch(`${API_URL}${path}`, { headers, data }),
+    put: (path: string, data: object) => request.put(`${API_URL}${path}`, { headers, data }),
     delete: (path: string) => request.delete(`${API_URL}${path}`, { headers }),
     upload: (path: string, file: { name: string; mimeType: string; buffer: Buffer }, caption = "") =>
       request.post(`${API_URL}${path}`, { headers, multipart: { file, caption } }),
