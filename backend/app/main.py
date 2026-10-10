@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routers import users
+from app.routers import profile, users
 from app.timeline.router import router as timeline_router
 
 settings = get_settings()
@@ -18,6 +18,7 @@ app.add_middleware(
 )
 
 app.include_router(users.router)
+app.include_router(profile.router)
 app.include_router(timeline_router)
 
 

@@ -1,23 +1,13 @@
-import { type APIRequestContext, expect, test } from "@playwright/test";
-import { accessToken, API_URL, logIn, requireTestUser } from "./helpers";
+import { expect, test } from "@playwright/test";
+import { API_URL, apiClient, logIn, requireTestUser } from "./helpers";
 
 // Timeline API through the real stack: browser login -> FastAPI -> Supabase.
 // Becomes a UI flow once the timeline UI exists.
 test.beforeEach(() => requireTestUser());
 
-function client(request: APIRequestContext, token: string) {
-  const headers = { Authorization: `Bearer ${token}` };
-  return {
-    get: (path: string) => request.get(`${API_URL}${path}`, { headers }),
-    post: (path: string, data: object) => request.post(`${API_URL}${path}`, { headers, data }),
-    patch: (path: string, data: object) => request.patch(`${API_URL}${path}`, { headers, data }),
-    delete: (path: string) => request.delete(`${API_URL}${path}`, { headers }),
-  };
-}
-
 test("a logged-in user manages categories and events", async ({ page, request }) => {
   await logIn(page);
-  const api = client(request, await accessToken(page));
+  const api = await apiClient(page, request);
   const tag = `e2e-${Date.now()}`;
 
   const categoryResponse = await api.post("/timeline/categories", { name: tag, color: "#22AA66" });

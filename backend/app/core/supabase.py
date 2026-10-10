@@ -1,6 +1,6 @@
-"""Minimal Supabase REST (PostgREST) client that acts as the logged-in user.
+"""Minimal Supabase REST (PostgREST) and Storage client that acts as the logged-in user.
 
-Requests carry the user's access token, so Row Level Security applies to every query.
+Requests carry the user's access token, so Row Level Security and storage policies apply to every call.
 """
 
 import logging
@@ -40,9 +40,10 @@ def get_http_client() -> httpx.Client:
 
 
 class Supabase:
-    def __init__(self, http: httpx.Client, token: str) -> None:
+    def __init__(self, http: httpx.Client, token: str, user_id: str) -> None:
         self._http = http
         self._token = token
+        self.user_id = user_id
 
     def rest(
         self,
@@ -51,21 +52,46 @@ class Supabase:
         *,
         params: dict[str, str] | None = None,
         json: Any = None,
+        prefer: str = "return=representation",
     ) -> list[dict[str, Any]]:
         """Call /rest/v1/{table}; returns the affected/selected rows."""
+        response = self._send(method, f"/rest/v1/{table}", params=params, json=json, headers={"Prefer": prefer})
+        return response.json() if response.content else []
+
+    # --- storage (bucket policies restrict users to their own folder) -----------
+
+    def upload(self, bucket: str, path: str, data: bytes, content_type: str) -> None:
+        self._send(
+            "POST",
+            f"/storage/v1/object/{bucket}/{path}",
+            content=data,
+            headers={"Content-Type": content_type, "x-upsert": "false"},
+        )
+
+    def remove(self, bucket: str, paths: list[str]) -> None:
+        if paths:
+            self._send("DELETE", f"/storage/v1/object/{bucket}", json={"prefixes": paths})
+
+    def signed_urls(self, bucket: str, paths: list[str], expires_in: int) -> dict[str, str]:
+        """Map each path to a temporary download URL."""
+        if not paths:
+            return {}
+        response = self._send(
+            "POST", f"/storage/v1/object/sign/{bucket}", json={"expiresIn": expires_in, "paths": paths}
+        )
+        base = f"{self._http.base_url}".rstrip("/") + "/storage/v1"
+        return {item["path"]: base + item["signedURL"] for item in response.json() if item.get("signedURL")}
+
+    def _send(self, method: str, url: str, *, headers: dict[str, str], **kwargs: Any) -> httpx.Response:
         try:
             response = self._http.request(
-                method,
-                f"/rest/v1/{table}",
-                params=params,
-                json=json,
-                headers={"Authorization": f"Bearer {self._token}", "Prefer": "return=representation"},
+                method, url, headers={"Authorization": f"Bearer {self._token}", **headers}, **kwargs
             )
         except httpx.HTTPError as exc:
             logger.error("Supabase request failed: %s", exc)
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Database unavailable") from exc
         if response.is_success:
-            return response.json() if response.content else []
+            return response
         raise _to_http_error(response)
 
 
@@ -91,7 +117,7 @@ def get_supabase(
     user: CurrentUserDep,
     http: Annotated[httpx.Client, Depends(get_http_client)],
 ) -> Supabase:
-    return Supabase(http, user.token)
+    return Supabase(http, user.token, user.id)
 
 
 # Use as a route parameter type: `db: SupabaseDep`.

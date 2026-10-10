@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { type APIRequestContext, expect, type Page, test } from "@playwright/test";
 
 export const API_URL = "http://localhost:8000";
 
@@ -26,4 +26,17 @@ export async function accessToken(page: Page): Promise<string> {
     const key = Object.keys(localStorage).find((k) => /^sb-.+-auth-token$/.test(k));
     return key ? JSON.parse(localStorage.getItem(key)!).access_token : "";
   });
+}
+
+/** Backend API client authorized as the user logged in on `page`. */
+export async function apiClient(page: Page, request: APIRequestContext) {
+  const headers = { Authorization: `Bearer ${await accessToken(page)}` };
+  return {
+    get: (path: string) => request.get(`${API_URL}${path}`, { headers }),
+    post: (path: string, data: object) => request.post(`${API_URL}${path}`, { headers, data }),
+    patch: (path: string, data: object) => request.patch(`${API_URL}${path}`, { headers, data }),
+    delete: (path: string) => request.delete(`${API_URL}${path}`, { headers }),
+    upload: (path: string, file: { name: string; mimeType: string; buffer: Buffer }, caption = "") =>
+      request.post(`${API_URL}${path}`, { headers, multipart: { file, caption } }),
+  };
 }
