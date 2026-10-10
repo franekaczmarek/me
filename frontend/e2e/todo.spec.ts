@@ -102,3 +102,39 @@ test("a user adds a routine that shows up on its days, and sees statistics", asy
     for (const t of tasks.filter((t) => t.title.startsWith(tag))) await api.delete(`/todo/tasks/${t.id}`);
   }
 });
+
+test("a user drags tasks between the inbox and the days", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const title = `e2e-${Date.now()} drag`;
+  const task = await (await api.post("/todo/tasks", { title })).json();
+
+  async function dragTo(target: import("@playwright/test").Locator) {
+    const row = page.getByRole("listitem").filter({ hasText: title });
+    await row.hover();
+    const handle = (await row.locator("[data-drag-handle]").boundingBox())!;
+    const box = (await target.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + 30, { steps: 12 });
+    await expect(page.getByTestId("drag-ghost")).toHaveText(title);
+    await page.mouse.up();
+  }
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const inbox = page.getByRole("region", { name: "Inbox" });
+    const tomorrow = page.getByRole("region", { name: /^Tomorrow/ });
+    await expect(inbox.getByText(title)).toBeVisible();
+
+    await dragTo(tomorrow);
+    await expect(tomorrow.getByText(title)).toBeVisible();
+    await expect(inbox.getByText(title)).toBeHidden();
+
+    await dragTo(inbox);
+    await expect(inbox.getByText(title)).toBeVisible();
+    await expect(tomorrow.getByText(title)).toBeHidden();
+  } finally {
+    await api.delete(`/todo/tasks/${task.id}`);
+  }
+});

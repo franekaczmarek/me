@@ -2,6 +2,7 @@
 
 import { dayTitle, formatMinutes } from "@/lib/todo/format";
 import type { Day, Task } from "@/lib/todo/types";
+import { useIsOver } from "./dnd";
 import { QuickAdd } from "./QuickAdd";
 import { TaskRow } from "./TaskRow";
 
@@ -21,13 +22,18 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
   const over = day.planned_min > day.capacity_min;
   const fill = day.capacity_min ? Math.min(1, day.planned_min / day.capacity_min) : day.planned_min ? 1 : 0;
   const done = day.tasks.filter((t) => t.status === "done").length;
+  // Tasks can be dropped on today and later days, not on past ones.
+  const isOver = useIsOver(day.date);
 
   return (
     <section
       ref={ref}
       aria-label={`${name}, ${date}`}
       data-day={day.date}
-      className={`rounded-3xl border p-4 shadow-[0_8px_30px_rgba(120,100,80,0.06)] ${
+      data-drop-date={day.is_overdue ? undefined : day.date}
+      className={`rounded-3xl border p-4 shadow-[0_8px_30px_rgba(120,100,80,0.06)] transition-[box-shadow,background-color] ${
+        isOver ? "!bg-[#fff1ec] ring-2 ring-[#ffa36c] dark:!bg-[#2d211b]" : ""
+      } ${
         day.is_today
           ? "border-transparent bg-white ring-2 ring-[#ff7a6b] shadow-[0_10px_34px_rgba(255,122,107,0.22)] dark:bg-zinc-900"
           : day.is_overdue

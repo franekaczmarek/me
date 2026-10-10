@@ -3,6 +3,7 @@
 import { withAlpha } from "@/lib/colors";
 import { deadlineLabel, formatMinutes } from "@/lib/todo/format";
 import type { Priority, Task } from "@/lib/todo/types";
+import { DragHandle, useDrag } from "./dnd";
 
 export const PRIORITY_COLOR: Record<Priority, string> = { high: "#ff7a6b", normal: "#56a8f5", low: "#4cc9a0" };
 
@@ -19,6 +20,7 @@ type Props = {
 const chip = "rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap";
 
 export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Props) {
+  const { dragging } = useDrag();
   const done = task.status === "done";
   const color = PRIORITY_COLOR[task.priority];
   const deadline = task.deadline && !done ? deadlineLabel(task.deadline, today) : null;
@@ -26,8 +28,12 @@ export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Prop
   return (
     <li
       data-task-id={task.id}
-      className="group flex items-center gap-3 rounded-2xl px-3 py-2 transition hover:bg-stone-50 dark:hover:bg-zinc-800/60"
+      className={`group flex items-center gap-2.5 rounded-2xl py-2 pr-3 pl-1 transition hover:bg-stone-50 dark:hover:bg-zinc-800/60 ${
+        dragging?.id === task.id ? "opacity-40" : ""
+      }`}
     >
+      {!done && <DragHandle task={task} />}
+      {done && <span className="w-3 shrink-0" />}
       <button
         type="button"
         role="checkbox"

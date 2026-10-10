@@ -5,6 +5,7 @@ import { Button, Message } from "@/components/ui";
 import { todoApi } from "@/lib/todo/api";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
+import { DragProvider, DropZone, INBOX } from "./dnd";
 import { QuickAdd } from "./QuickAdd";
 import { RoutinesCard } from "./RoutinesCard";
 import { StatsCard } from "./StatsCard";
@@ -90,85 +91,88 @@ export function TodoModule() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPanel({ mode: "new", date: feed.today })}
-            className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
-          >
-            Add task
-          </button>
-          {actionError && <Message kind="error">{actionError}</Message>}
+    <DragProvider onDrop={move}>
+      <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPanel({ mode: "new", date: feed.today })}
+              className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
+            >
+              Add task
+            </button>
+            {actionError && <Message kind="error">{actionError}</Message>}
+          </div>
+          <div className="flex flex-col gap-4 md:max-h-[calc(100vh-11rem)] md:overflow-y-auto md:px-1 md:py-2" data-testid="day-list">
+            {feed.days.map((day) => (
+              <DayCard
+                key={day.date}
+                ref={day.is_today ? todayRef : undefined}
+                day={day}
+                today={feed.today}
+                onToggle={toggle}
+                onOpen={open}
+                onMove={move}
+                onAdd={add}
+              />
+            ))}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 md:max-h-[calc(100vh-11rem)] md:overflow-y-auto md:px-1 md:py-2" data-testid="day-list">
-          {feed.days.map((day) => (
-            <DayCard
-              key={day.date}
-              ref={day.is_today ? todayRef : undefined}
-              day={day}
-              today={feed.today}
-              onToggle={toggle}
-              onOpen={open}
-              onMove={move}
-              onAdd={add}
-            />
-          ))}
+
+        <div className="flex w-full flex-col gap-4 md:w-96">
+          {panel ? (
+            <aside
+              aria-label={panel.mode === "new" ? "New task" : "Edit task"}
+              className="flex flex-col gap-4 rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.08)] dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">
+                {panel.mode === "new" ? "New task" : "Edit task"}
+              </p>
+              <TaskForm
+                key={panel.mode === "edit" ? panel.task.id : `new-${panel.date}`}
+                task={panel.mode === "edit" ? panel.task : undefined}
+                defaultDate={panel.mode === "new" ? panel.date : undefined}
+                submitLabel={panel.mode === "new" ? "Add task" : "Save changes"}
+                onSave={save}
+                onCancel={() => setPanel(null)}
+                onDelete={
+                  panel.mode === "edit"
+                    ? async () => {
+                        await todoApi.deleteTask(panel.task.id);
+                        await reload();
+                        setPanel(null);
+                      }
+                    : undefined
+                }
+              />
+            </aside>
+          ) : null}
+
+          <StatsCard version={version} />
+
+          <DropZone
+            id={INBOX}
+            aria-label="Inbox"
+            className="rounded-3xl border border-stone-100 bg-white p-4 shadow-[0_8px_30px_rgba(120,100,80,0.06)] dark:border-zinc-800 dark:bg-zinc-900"
+          >
+            <header className="flex items-baseline justify-between px-3">
+              <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">Inbox</h2>
+              <span className="text-xs text-stone-500">{feed.inbox.length ? `${feed.inbox.length} without a day` : "Empty"}</span>
+            </header>
+            {feed.inbox.length > 0 && (
+              <ul className="mt-2 flex flex-col">
+                {feed.inbox.map((task) => (
+                  <TaskRow key={task.id} task={task} today={feed.today} onToggle={toggle} onOpen={open} />
+                ))}
+              </ul>
+            )}
+            <QuickAdd label="Add a task to the inbox" onAdd={(title) => add(title, null)} />
+          </DropZone>
+
+          <RoutinesCard onChanged={() => reload().catch(() => {})} />
         </div>
       </div>
-
-      <div className="flex w-full flex-col gap-4 md:w-96">
-        {panel ? (
-          <aside
-            aria-label={panel.mode === "new" ? "New task" : "Edit task"}
-            className="flex flex-col gap-4 rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.08)] dark:border-zinc-800 dark:bg-zinc-900"
-          >
-            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">
-              {panel.mode === "new" ? "New task" : "Edit task"}
-            </p>
-            <TaskForm
-              key={panel.mode === "edit" ? panel.task.id : `new-${panel.date}`}
-              task={panel.mode === "edit" ? panel.task : undefined}
-              defaultDate={panel.mode === "new" ? panel.date : undefined}
-              submitLabel={panel.mode === "new" ? "Add task" : "Save changes"}
-              onSave={save}
-              onCancel={() => setPanel(null)}
-              onDelete={
-                panel.mode === "edit"
-                  ? async () => {
-                      await todoApi.deleteTask(panel.task.id);
-                      await reload();
-                      setPanel(null);
-                    }
-                  : undefined
-              }
-            />
-          </aside>
-        ) : null}
-
-        <StatsCard version={version} />
-
-        <section
-          aria-label="Inbox"
-          className="rounded-3xl border border-stone-100 bg-white p-4 shadow-[0_8px_30px_rgba(120,100,80,0.06)] dark:border-zinc-800 dark:bg-zinc-900"
-        >
-          <header className="flex items-baseline justify-between px-3">
-            <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">Inbox</h2>
-            <span className="text-xs text-stone-500">{feed.inbox.length ? `${feed.inbox.length} without a day` : "Empty"}</span>
-          </header>
-          {feed.inbox.length > 0 && (
-            <ul className="mt-2 flex flex-col">
-              {feed.inbox.map((task) => (
-                <TaskRow key={task.id} task={task} today={feed.today} onToggle={toggle} onOpen={open} />
-              ))}
-            </ul>
-          )}
-          <QuickAdd label="Add a task to the inbox" onAdd={(title) => add(title, null)} />
-        </section>
-
-        <RoutinesCard onChanged={() => reload().catch(() => {})} />
-      </div>
-    </div>
+    </DragProvider>
   );
 }
