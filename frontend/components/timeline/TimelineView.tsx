@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { darken, lighten, withAlpha } from "@/lib/timeline/colors";
+import { darken, lighten, withAlpha } from "@/lib/colors";
 import { dayOf } from "@/lib/timeline/dates";
 import {
   clampRange,

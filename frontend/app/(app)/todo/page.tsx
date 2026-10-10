@@ -1,5 +1,5 @@
-import { ComingSoon } from "@/components/ComingSoon";
+import { TodoModule } from "@/components/todo/TodoModule";
 
 export default function TodoPage() {
-  return <ComingSoon title="To-do" />;
+  return <TodoModule />;
 }

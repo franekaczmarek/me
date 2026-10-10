@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { PALETTE } from "@/lib/timeline/colors";
+import { PALETTE } from "@/lib/colors";
 import type { Category, TimelineEvent } from "@/lib/timeline/types";
 import { TimelineView } from "./TimelineView";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PALETTE } from "./colors";
+import { PALETTE } from "@/lib/colors";
 import {
   clampRange,
   fitRange,

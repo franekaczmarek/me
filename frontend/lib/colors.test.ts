@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { darken, lighten, PALETTE, paletteColorFor, withAlpha } from "./colors";
+import { darken, lighten, PALETTE, paletteColorFor, withAlpha } from "@/lib/colors";
 
 describe("colors", () => {
   it("makes a translucent version of a colour", () => {

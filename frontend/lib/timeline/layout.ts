@@ -1,6 +1,6 @@
 // Geometry of the timeline: date <-> x, scale ticks, item positions and lanes, zoom and pan.
 // Pure functions; the component only renders what they return.
-import { paletteColorFor } from "./colors";
+import { paletteColorFor } from "@/lib/colors";
 import { periodEnd, periodStart, precisionOf } from "./dates";
 import type { Category, TimelineEvent } from "./types";
 

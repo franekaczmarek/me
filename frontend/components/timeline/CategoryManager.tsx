@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { PALETTE } from "@/lib/timeline/colors";
+import { PALETTE } from "@/lib/colors";
 import type { Category } from "@/lib/timeline/types";
 
 type CategoryInput = Omit<Category, "id">;
