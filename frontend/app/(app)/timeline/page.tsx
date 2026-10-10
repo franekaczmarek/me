@@ -1,5 +1,5 @@
-import { ComingSoon } from "@/components/ComingSoon";
+import { TimelineModule } from "@/components/timeline/TimelineModule";
 
 export default function TimelinePage() {
-  return <ComingSoon title="Timeline" />;
+  return <TimelineModule />;
 }

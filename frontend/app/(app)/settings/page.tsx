@@ -5,6 +5,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { Button, Field, Message } from "@/components/ui";
 import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { ProfileForm } from "./ProfileForm";
 
 export default function SettingsPage() {
   const { session } = useAuth();
@@ -48,6 +49,8 @@ export default function SettingsPage() {
           {backendOk === null ? "checking…" : backendOk ? "connected" : "not reachable (is it running?)"}
         </p>
       </section>
+
+      <ProfileForm />
 
       <form onSubmit={onChangePassword} className="flex flex-col gap-4">
         <h2 className="font-semibold">Change password</h2>
