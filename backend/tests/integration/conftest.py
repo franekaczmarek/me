@@ -12,9 +12,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.auth import get_jwks_client
 from app.core.config import get_settings
+from app.main import app
 
 E2E_ENV = Path(__file__).resolve().parents[3] / "frontend" / ".env.e2e"
 
@@ -96,3 +98,15 @@ def cleanup(request: pytest.FixtureRequest) -> Iterator[None]:
     supa: Supa = request.getfixturevalue("supa")
     for table in ("timeline_events", "timeline_categories"):
         supa.rest("DELETE", table, params={"user_id": f"eq.{supa.user_id}"})
+
+
+@pytest.fixture(autouse=True)
+def fake_signing_key() -> None:
+    """Overrides the unit-test fixture: integration tests use real Supabase tokens."""
+
+
+@pytest.fixture
+def api(supa: Supa) -> Iterator[TestClient]:
+    """The FastAPI app, called as the test account (real token, real database)."""
+    with TestClient(app, headers={"Authorization": f"Bearer {supa.token}"}) as client:
+        yield client

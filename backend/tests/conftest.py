@@ -10,6 +10,8 @@ from app.core import auth
 from app.core.config import get_settings
 from app.main import app
 
+pytest_plugins = ["tests.fake_supabase"]
+
 # Test key pair standing in for Supabase's signing key.
 _PRIVATE_KEY = ec.generate_private_key(ec.SECP256R1())
 

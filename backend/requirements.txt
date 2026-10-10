@@ -2,7 +2,7 @@ fastapi[standard]==0.143.0
 pydantic-settings==2.15.0
 pyjwt[crypto]==2.15.1
 certifi==2026.7.22
+httpx==0.28.1
 
 # dev / test
 pytest==9.1.1
-httpx==0.28.1

@@ -19,3 +19,11 @@ export async function logIn(page: Page) {
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page).toHaveURL(/\/timeline$/);
 }
+
+/** Access token of the logged-in session (supabase-js keeps it in localStorage). */
+export async function accessToken(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => /^sb-.+-auth-token$/.test(k));
+    return key ? JSON.parse(localStorage.getItem(key)!).access_token : "";
+  });
+}
