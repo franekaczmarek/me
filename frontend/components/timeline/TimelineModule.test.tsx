@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineItem } from "@/lib/timeline/items";
@@ -12,11 +12,15 @@ const mocks = vi.hoisted(() => ({
     createEvent: vi.fn(),
     updateEvent: vi.fn(),
     deleteEvent: vi.fn(),
+    createCategory: vi.fn(),
+    updateCategory: vi.fn(),
+    deleteCategory: vi.fn(),
   },
   profileApi: { get: vi.fn() },
   viewProps: vi.fn(),
 }));
 vi.mock("@/lib/timeline/api", () => ({ timelineApi: mocks.timelineApi, profileApi: mocks.profileApi }));
+vi.mock("@/lib/supabase", async () => ({ supabase: (await import("@/test/mocks")).supabaseMock }));
 
 // Stand-in for the vis-timeline view: one button per item, plus a "double-click" spot.
 vi.mock("./TimelineView", () => ({
@@ -182,6 +186,39 @@ describe("TimelineModule", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Database unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "High school" })).toBeInTheDocument();
+  });
+
+  it("manages categories and recolors their events", async () => {
+    mocks.timelineApi.updateCategory.mockResolvedValue({ ...school, color: "#dc2626" });
+    mocks.timelineApi.createCategory.mockResolvedValue({ id: "c2", name: "Family", color: "#16a34a" });
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "Categories" }));
+    const panel = screen.getByRole("complementary", { name: "Categories" });
+
+    await userEvent.type(within(panel).getByLabelText("New category name"), "Family");
+    await userEvent.click(within(panel).getByRole("button", { name: "Add" }));
+    expect(await within(panel).findByLabelText("Family name")).toBeInTheDocument();
+
+    fireEvent.input(within(panel).getByLabelText("School color"), { target: { value: "#dc2626" } });
+    await userEvent.click(within(panel).getByRole("button", { name: "Save" }));
+    expect(mocks.timelineApi.updateCategory).toHaveBeenCalledWith("c1", { name: "School", color: "#dc2626" });
+    await waitFor(() => {
+      const item = mocks.viewProps.mock.lastCall![0].items.find((i: TimelineItem) => i.id === "e1");
+      expect(item.style).toContain("#dc2626");
+    });
+  });
+
+  it("deleting a category keeps its events without a category", async () => {
+    mocks.timelineApi.deleteCategory.mockResolvedValue(undefined);
+    render(<TimelineModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "Categories" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete School" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mocks.timelineApi.deleteCategory).toHaveBeenCalledWith("c1");
+
+    await userEvent.click(screen.getByRole("button", { name: "High school" }));
+    const details = screen.getByRole("complementary", { name: "Event details" });
+    expect(details).not.toHaveTextContent("School");
   });
 
   it("shows an empty state", async () => {

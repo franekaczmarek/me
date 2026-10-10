@@ -7,6 +7,7 @@ import { profileApi, timelineApi } from "@/lib/timeline/api";
 import { initialWindow } from "@/lib/timeline/dates";
 import { toItems } from "@/lib/timeline/items";
 import type { Category, EventInput, PartialDate, Profile, TimelineEvent } from "@/lib/timeline/types";
+import { CategoryManager } from "./CategoryManager";
 import { EventDetails } from "./EventDetails";
 import { EventForm } from "./EventForm";
 import { TimelineView } from "./TimelineView";
@@ -14,9 +15,13 @@ import { TimelineView } from "./TimelineView";
 type Data = { events: TimelineEvent[]; categories: Category[]; profile: Profile };
 
 /** What the side panel shows. */
-type Panel = { mode: "view" | "edit"; id: string } | { mode: "new"; start?: PartialDate } | null;
+type Panel =
+  | { mode: "view" | "edit"; id: string }
+  | { mode: "new"; start?: PartialDate }
+  | { mode: "categories" }
+  | null;
 
-const PANEL_TITLES = { view: "Event details", edit: "Edit event", new: "New event" };
+const PANEL_TITLES = { view: "Event details", edit: "Edit event", new: "New event", categories: "Categories" };
 
 export function TimelineModule() {
   const [data, setData] = useState<Data | null>(null);
@@ -62,7 +67,29 @@ export function TimelineModule() {
     setPanel(null);
   }
 
-  const selected = panel && panel.mode !== "new" ? data.events.find((e) => e.id === panel.id) : undefined;
+  const setCategories = (update: (categories: Category[]) => Category[]) =>
+    setData((d) => d && { ...d, categories: update(d.categories) });
+  const byName = (a: Category, b: Category) => a.name.localeCompare(b.name);
+
+  const categoryActions = {
+    onCreate: async (input: Omit<Category, "id">) => {
+      const created = await timelineApi.createCategory(input);
+      setCategories((categories) => [...categories, created].sort(byName));
+    },
+    onUpdate: async (id: string, input: Omit<Category, "id">) => {
+      const updated = await timelineApi.updateCategory(id, input);
+      setCategories((categories) => categories.map((c) => (c.id === id ? updated : c)).sort(byName));
+    },
+    onDelete: async (id: string) => {
+      await timelineApi.deleteCategory(id);
+      setCategories((categories) => categories.filter((c) => c.id !== id));
+      // Mirrors the database: the events stay, without a category.
+      setEvents((events) => events.map((e) => (e.category_id === id ? { ...e, category_id: null } : e)));
+    },
+  };
+
+  const selected =
+    panel?.mode === "view" || panel?.mode === "edit" ? data.events.find((e) => e.id === panel.id) : undefined;
 
   return (
     <div className="flex flex-1 flex-col md:flex-row">
@@ -71,6 +98,13 @@ export function TimelineModule() {
           <Button type="button" onClick={() => setPanel({ mode: "new" })}>
             Add event
           </Button>
+          <button
+            type="button"
+            onClick={() => setPanel({ mode: "categories" })}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Categories
+          </button>
           <p className="text-xs text-zinc-500">Or double-click the timeline to add an event on that day.</p>
         </div>
         {data.events.length === 0 && (
@@ -93,7 +127,7 @@ export function TimelineModule() {
           onAdd={(start) => setPanel({ mode: "new", start })}
         />
       </div>
-      {panel && (panel.mode === "new" || selected) && (
+      {panel && (panel.mode === "new" || panel.mode === "categories" || selected) && (
         <aside
           aria-label={PANEL_TITLES[panel.mode]}
           className="flex w-full flex-col gap-4 overflow-y-auto border-t border-zinc-200 p-4 md:w-96 md:border-t-0 md:border-l dark:border-zinc-800"
@@ -109,6 +143,7 @@ export function TimelineModule() {
               ×
             </button>
           </div>
+          {panel.mode === "categories" && <CategoryManager categories={data.categories} {...categoryActions} />}
           {panel.mode === "new" && (
             <EventForm
               // A new double-click starts a fresh form.

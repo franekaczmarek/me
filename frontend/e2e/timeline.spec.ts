@@ -106,3 +106,47 @@ test("double-clicking the timeline starts a new event on that day", async ({ pag
   await form.getByRole("button", { name: "Cancel" }).click();
   await expect(form).toBeHidden();
 });
+
+test("a user manages categories and sees their colors on the timeline", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const tag = `e2e-${Date.now()}`;
+  const event = await (await api.post("/timeline/events", { title: `${tag} trip`, start: "2024-05-10" })).json();
+
+  try {
+    await page.reload();
+    await page.getByRole("button", { name: "Categories" }).click();
+    const panel = page.getByRole("complementary", { name: "Categories" });
+    await panel.getByLabel("New category name").fill(tag);
+    await panel.getByLabel("New category color").fill("#dc2626");
+    await panel.getByRole("button", { name: "Add" }).click();
+    await expect(panel.getByLabel(`${tag} name`)).toHaveValue(tag);
+
+    // Duplicate names are explained.
+    await panel.getByLabel("New category name").fill(tag.toUpperCase());
+    await panel.getByRole("button", { name: "Add" }).click();
+    await expect(panel.getByText("A category with this name already exists.")).toBeVisible();
+
+    // Put the event in the category; the timeline item takes its color.
+    await page.getByRole("button", { name: "Fit all" }).click();
+    await page.getByTestId("timeline").getByText(`${tag} trip`).click();
+    await page.getByRole("complementary", { name: "Event details" }).getByRole("button", { name: "Edit" }).click();
+    const edit = page.getByRole("complementary", { name: "Edit event" });
+    await edit.getByLabel("Category").selectOption(tag);
+    await edit.getByRole("button", { name: "Save changes" }).click();
+    const item = page.locator(".vis-item", { hasText: `${tag} trip` });
+    await expect(item).toHaveAttribute("style", /--item-color: #dc2626/);
+
+    // Deleting the category keeps the event.
+    await page.getByRole("button", { name: "Categories" }).click();
+    await panel.getByRole("button", { name: `Delete ${tag}` }).click();
+    await panel.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(panel.getByLabel(`${tag} name`)).toBeHidden();
+    await expect(item).toBeVisible();
+    await expect(item).not.toHaveAttribute("style", /#dc2626/);
+  } finally {
+    await api.delete(`/timeline/events/${event.id}`);
+    const categories: { id: string; name: string }[] = await (await api.get("/timeline/categories")).json();
+    for (const c of categories.filter((c) => c.name.toLowerCase() === tag)) await api.delete(`/timeline/categories/${c.id}`);
+  }
+});
