@@ -1,7 +1,10 @@
+import logging
+import ssl
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Annotated
 
+import certifi
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,6 +16,7 @@ ALLOWED_ALGORITHMS = ["ES256", "RS256"]
 AUDIENCE = "authenticated"
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -26,7 +30,11 @@ class CurrentUser:
 @lru_cache
 def get_jwks_client() -> jwt.PyJWKClient:
     settings = get_settings()
-    return jwt.PyJWKClient(f"{settings.supabase_url}/auth/v1/.well-known/jwks.json")
+    # certifi's CA bundle: the system one is missing on some setups (e.g. python.org macOS builds).
+    return jwt.PyJWKClient(
+        f"{settings.supabase_url}/auth/v1/.well-known/jwks.json",
+        ssl_context=ssl.create_default_context(cafile=certifi.where()),
+    )
 
 
 def get_signing_key(token: str):
@@ -52,6 +60,10 @@ def get_current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
     try:
         claims = decode_token(credentials.credentials)
+    except jwt.PyJWKClientConnectionError as exc:
+        # Can't fetch Supabase's public keys: a server problem, not a bad token.
+        logger.error("Cannot fetch Supabase JWKS: %s", exc)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Auth keys unavailable") from exc
     except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from exc
     return CurrentUser(id=claims["sub"], email=claims.get("email"), token=credentials.credentials)
