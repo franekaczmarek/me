@@ -232,9 +232,20 @@ def test_update_event_violating_db_order_check_is_422(api: TestClient, fake_db: 
 
 
 def test_delete_event(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [])  # no photos
     fake_db.reply(200, [{"id": EVENT_ID}])
     assert api.delete(f"/timeline/events/{EVENT_ID}").status_code == 204
     assert fake_db.last.method == "DELETE"
+    assert fake_db.last.url.path == "/rest/v1/timeline_events"
+
+
+def test_delete_event_removes_its_photo_files(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [{"storage_path": "u/e/m-display.webp", "thumb_path": "u/e/m-thumb.webp"}])
+    fake_db.reply(200, [{"id": EVENT_ID}])
+    assert api.delete(f"/timeline/events/{EVENT_ID}").status_code == 204
+    assert fake_db.requests[0].url.params["event_id"] == f"eq.{EVENT_ID}"
+    assert fake_db.last.url.path == "/storage/v1/object/timeline-media"
+    assert fake_db.last_json == {"prefixes": ["u/e/m-display.webp", "u/e/m-thumb.webp"]}
 
 
 def test_delete_missing_event_is_404(api: TestClient, fake_db: FakeSupabase) -> None:

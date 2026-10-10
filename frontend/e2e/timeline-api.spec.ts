@@ -45,3 +45,46 @@ test("the timeline API rejects requests without a token", async ({ request }) =>
   expect((await request.get(`${API_URL}/timeline/events`)).status()).toBe(401);
   expect((await request.post(`${API_URL}/timeline/categories`, { data: {} })).status()).toBe(401);
 });
+
+// 1x1 transparent PNG.
+const PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+test("a logged-in user adds, views and removes an event photo", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const event = await (await api.post("/timeline/events", { title: "Photo test", start: "2020-05" })).json();
+
+  try {
+    const uploaded = await api.upload(
+      `/timeline/events/${event.id}/media`,
+      { name: "pixel.png", mimeType: "image/png", buffer: PIXEL_PNG },
+      "Tiny",
+    );
+    expect(uploaded.status()).toBe(201);
+    const photo = await uploaded.json();
+    expect(photo).toMatchObject({ caption: "Tiny", width: 1, height: 1 });
+
+    // The signed URL serves the stored WebP file directly from Supabase Storage.
+    const file = await request.get(photo.url);
+    expect(file.status()).toBe(200);
+    expect(file.headers()["content-type"]).toBe("image/webp");
+
+    const listed = await (await api.get(`/timeline/events/${event.id}/media`)).json();
+    expect(listed.map((p: { id: string }) => p.id)).toEqual([photo.id]);
+
+    const notImage = await api.upload(`/timeline/events/${event.id}/media`, {
+      name: "notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("hello"),
+    });
+    expect(notImage.status()).toBe(422);
+
+    expect((await api.delete(`/timeline/media/${photo.id}`)).status()).toBe(204);
+    expect(await (await api.get(`/timeline/events/${event.id}/media`)).json()).toEqual([]);
+  } finally {
+    await api.delete(`/timeline/events/${event.id}`);
+  }
+});

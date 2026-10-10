@@ -82,10 +82,12 @@ class Supabase:
         base = f"{self._http.base_url}".rstrip("/") + "/storage/v1"
         return {item["path"]: base + item["signedURL"] for item in response.json() if item.get("signedURL")}
 
-    def _send(self, method: str, url: str, *, headers: dict[str, str], **kwargs: Any) -> httpx.Response:
+    def _send(
+        self, method: str, url: str, *, headers: dict[str, str] | None = None, **kwargs: Any
+    ) -> httpx.Response:
         try:
             response = self._http.request(
-                method, url, headers={"Authorization": f"Bearer {self._token}", **headers}, **kwargs
+                method, url, headers={"Authorization": f"Bearer {self._token}", **(headers or {})}, **kwargs
             )
         except httpx.HTTPError as exc:
             logger.error("Supabase request failed: %s", exc)
@@ -111,6 +113,13 @@ def _to_http_error(response: httpx.Response) -> HTTPException:
         return HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
     logger.error("Unexpected Supabase error %s: %s", response.status_code, response.text)
     return HTTPException(status.HTTP_502_BAD_GATEWAY, "Database error")
+
+
+def one_or_404(rows: list[dict[str, Any]], what: str) -> dict[str, Any]:
+    # RLS hides other users' rows, so "not yours" and "doesn't exist" look the same.
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{what} not found")
+    return rows[0]
 
 
 def get_supabase(

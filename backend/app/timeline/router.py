@@ -4,7 +4,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from app.core.supabase import SupabaseDep
+from app.core.supabase import SupabaseDep, one_or_404
+from app.timeline.media import media_files, remove_files_quietly
 from app.timeline.schemas import (
     CATEGORY_COLUMNS,
     EVENT_COLUMNS,
@@ -20,13 +21,6 @@ router = APIRouter(prefix="/timeline", tags=["timeline"])
 
 CATEGORIES = "timeline_categories"
 EVENTS = "timeline_events"
-
-
-def _one(rows: list[dict], what: str) -> dict:
-    # RLS hides other users' rows, so "not yours" and "doesn't exist" look the same.
-    if not rows:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{what} not found")
-    return rows[0]
 
 
 def _by_id(item_id: UUID, columns: str) -> dict[str, str]:
@@ -56,13 +50,14 @@ def create_category(body: CategoryCreate, db: SupabaseDep) -> dict:
 def update_category(category_id: UUID, body: CategoryUpdate, db: SupabaseDep) -> dict:
     changes = body.model_dump(exclude_unset=True)
     _require_changes(changes)
-    return _one(db.rest("PATCH", CATEGORIES, params=_by_id(category_id, CATEGORY_COLUMNS), json=changes), "Category")
+    rows = db.rest("PATCH", CATEGORIES, params=_by_id(category_id, CATEGORY_COLUMNS), json=changes)
+    return one_or_404(rows, "Category")
 
 
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_category(category_id: UUID, db: SupabaseDep) -> Response:
     """Events in the category are kept; they just lose their category."""
-    _one(db.rest("DELETE", CATEGORIES, params=_by_id(category_id, "id")), "Category")
+    one_or_404(db.rest("DELETE", CATEGORIES, params=_by_id(category_id, "id")), "Category")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -77,7 +72,7 @@ def list_events(db: SupabaseDep) -> list[Event]:
 
 @router.get("/events/{event_id}", response_model=Event)
 def get_event(event_id: UUID, db: SupabaseDep) -> Event:
-    return Event.from_row(_one(db.rest("GET", EVENTS, params=_by_id(event_id, EVENT_COLUMNS)), "Event"))
+    return Event.from_row(one_or_404(db.rest("GET", EVENTS, params=_by_id(event_id, EVENT_COLUMNS)), "Event"))
 
 
 @router.post("/events", response_model=Event, status_code=status.HTTP_201_CREATED)
@@ -91,10 +86,13 @@ def update_event(event_id: UUID, body: EventUpdate, db: SupabaseDep) -> Event:
     changes = body.to_row()
     _require_changes(changes)
     rows = db.rest("PATCH", EVENTS, params=_by_id(event_id, EVENT_COLUMNS), json=changes)
-    return Event.from_row(_one(rows, "Event"))
+    return Event.from_row(one_or_404(rows, "Event"))
 
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_event(event_id: UUID, db: SupabaseDep) -> Response:
-    _one(db.rest("DELETE", EVENTS, params=_by_id(event_id, "id")), "Event")
+    """Also deletes the event's photos (rows cascade in the DB; files are removed here)."""
+    files = media_files(db, {"event_id": f"eq.{event_id}"})
+    one_or_404(db.rest("DELETE", EVENTS, params=_by_id(event_id, "id")), "Event")
+    remove_files_quietly(db, files)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
