@@ -2,8 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/components/AuthProvider";
+import { supabase } from "@/lib/supabase";
 
 export function ProfileMenu() {
+  const { session } = useAuth();
+  const email = session?.user.email ?? "";
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -26,11 +30,13 @@ export function ProfileMenu() {
         aria-expanded={open}
         className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
       >
-        {/* Replaced by the user's initial once auth is in place. */}
-        ?
+        {email.charAt(0).toUpperCase() || "?"}
       </button>
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <p className="truncate border-b border-zinc-200 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-700">
+            {email}
+          </p>
           <Link
             href="/settings"
             onClick={() => setOpen(false)}
@@ -38,10 +44,11 @@ export function ProfileMenu() {
           >
             Settings
           </Link>
+          {/* AuthGate redirects to /login once the session is gone. */}
           <button
             type="button"
-            disabled
-            className="block w-full px-4 py-2 text-left text-sm text-zinc-400"
+            onClick={() => supabase.auth.signOut()}
+            className="block w-full px-4 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             Log out
           </button>
