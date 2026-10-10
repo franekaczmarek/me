@@ -99,7 +99,8 @@ test("a user adds, edits and deletes an event in the UI", async ({ page, request
 
 test("double-clicking the timeline starts a new event on that day", async ({ page }) => {
   await logIn(page);
-  await page.getByTestId("timeline").locator(".vis-center").dblclick();
+  // An empty spot near the top-left corner of the timeline.
+  await page.getByTestId("timeline").dblclick({ position: { x: 24, y: 16 } });
   const form = page.getByRole("complementary", { name: "New event" });
   await expect(form.getByLabel("Date year")).not.toHaveValue("");
   await expect(form.getByLabel("Date day")).not.toHaveValue("");
@@ -134,8 +135,8 @@ test("a user manages categories and sees their colors on the timeline", async ({
     const edit = page.getByRole("complementary", { name: "Edit event" });
     await edit.getByLabel("Category").selectOption(tag);
     await edit.getByRole("button", { name: "Save changes" }).click();
-    const item = page.locator(".vis-item", { hasText: `${tag} trip` });
-    await expect(item).toHaveAttribute("style", /--item-color: #dc2626/);
+    const item = page.getByTestId("timeline").getByRole("button", { name: `${tag} trip` });
+    await expect(item).toHaveAttribute("data-color", "#dc2626");
 
     // Deleting the category keeps the event.
     await page.getByRole("button", { name: "Categories" }).click();
@@ -143,7 +144,7 @@ test("a user manages categories and sees their colors on the timeline", async ({
     await panel.getByRole("button", { name: "Delete", exact: true }).click();
     await expect(panel.getByLabel(`${tag} name`)).toBeHidden();
     await expect(item).toBeVisible();
-    await expect(item).not.toHaveAttribute("style", /#dc2626/);
+    await expect(item).not.toHaveAttribute("data-color", "#dc2626");
   } finally {
     await api.delete(`/timeline/events/${event.id}`);
     const categories: { id: string; name: string }[] = await (await api.get("/timeline/categories")).json();

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { ApiError } from "@/lib/api";
+import { PALETTE } from "@/lib/timeline/colors";
 import type { Category } from "@/lib/timeline/types";
 
 type CategoryInput = Omit<Category, "id">;
@@ -14,7 +15,6 @@ type Props = {
   onDelete: (id: string) => Promise<void>;
 };
 
-const PALETTE = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#9333ea", "#0891b2", "#db2777", "#65a30d"];
 
 const inputClass =
   "min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-300";

@@ -5,8 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { profileApi, timelineApi } from "@/lib/timeline/api";
 import { initialWindow } from "@/lib/timeline/dates";
-import { toItems } from "@/lib/timeline/items";
-import { loadVis } from "@/lib/timeline/vis";
 import type { Category, EventInput, PartialDate, Profile, TimelineEvent } from "@/lib/timeline/types";
 import { CategoryManager } from "./CategoryManager";
 import { EventDetails } from "./EventDetails";
@@ -33,14 +31,11 @@ export function TimelineModule() {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    // The timeline library is big: fetch it while the data loads, not after.
-    loadVis().catch(() => {});
     Promise.all([timelineApi.listEvents(), timelineApi.listCategories(), profileApi.get()])
       .then(([events, categories, profile]) => setData({ events, categories, profile }))
       .catch((e: Error) => setError(`Could not load the timeline: ${e.message}`));
   }, [attempt]);
 
-  const items = useMemo(() => (data ? toItems(data.events, data.categories) : []), [data]);
   const home = useMemo(() => initialWindow(data?.profile.birth_date ?? null), [data?.profile.birth_date]);
 
   if (error) {
@@ -107,26 +102,30 @@ export function TimelineModule() {
     panel?.mode === "view" || panel?.mode === "edit" ? data.events.find((e) => e.id === panel.id) : undefined;
 
   return (
-    <div className="flex flex-1 flex-col md:flex-row">
-      <div className="flex flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-3 px-4 pt-3">
-          <Button type="button" onClick={() => setPanel({ mode: "new" })}>
+    <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPanel({ mode: "new" })}
+            className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_8px_22px_rgba(255,122,107,0.45)]"
+          >
             Add event
-          </Button>
+          </button>
           <button
             type="button"
             onClick={() => setPanel({ mode: "categories" })}
-            className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-full border border-stone-200 bg-white px-5 py-2 text-sm font-medium text-stone-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
           >
             Categories
           </button>
-          <p className="text-xs text-zinc-500">Or double-click the timeline to add an event on that day.</p>
+          <p className="text-xs text-stone-500">Or double-click the timeline to add an event on that day.</p>
         </div>
         {data.events.length === 0 && (
-          <p className="px-4 pt-3 text-sm text-zinc-500">No events yet. Your timeline is empty.</p>
+          <p className="text-sm text-stone-500">No events yet. Your timeline is empty.</p>
         )}
         {!data.profile.birth_date && (
-          <p className="px-4 pt-3 text-sm text-zinc-500">
+          <p className="text-sm text-stone-500">
             Tip: set your birth date in{" "}
             <Link href="/settings" className="underline">
               Settings
@@ -135,7 +134,8 @@ export function TimelineModule() {
           </p>
         )}
         <TimelineView
-          items={items}
+          events={data.events}
+          categories={data.categories}
           home={home}
           selectedId={selected?.id ?? null}
           onSelect={(id) => setPanel(id ? { mode: "view", id } : null)}
@@ -145,7 +145,7 @@ export function TimelineModule() {
       {panel && (panel.mode === "new" || panel.mode === "categories" || selected) && (
         <aside
           aria-label={PANEL_TITLES[panel.mode]}
-          className="flex w-full flex-col gap-4 overflow-y-auto border-t border-zinc-200 p-4 md:w-96 md:border-t-0 md:border-l dark:border-zinc-800"
+          className="flex w-full flex-col gap-4 self-start overflow-y-auto rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.08)] md:w-96 dark:border-zinc-800 dark:bg-zinc-900"
         >
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{PANEL_TITLES[panel.mode]}</p>

@@ -1,146 +1,186 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Activity } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TimelineItem } from "@/lib/timeline/items";
+import { describe, expect, it, vi } from "vitest";
+import { PALETTE } from "@/lib/timeline/colors";
+import type { Category, TimelineEvent } from "@/lib/timeline/types";
 import { TimelineView } from "./TimelineView";
 
-// Fake vis-timeline: records calls and lets tests fire its events.
-const vis = vi.hoisted(() => {
-  const instances: FakeTimeline[] = [];
-  class FakeTimeline {
-    handlers: Record<string, (props: unknown) => void> = {};
-    setItems = vi.fn();
-    setSelection = vi.fn();
-    setWindow = vi.fn();
-    moveTo = vi.fn();
-    fit = vi.fn();
-    redraw = vi.fn();
-    destroy = vi.fn();
-    constructor(
-      public container: HTMLElement,
-      public items: unknown,
-      public options: Record<string, unknown>,
-    ) {
-      instances.push(this);
-    }
-    on(event: string, handler: (props: unknown) => void) {
-      this.handlers[event] = handler;
-    }
-    off(event: string) {
-      delete this.handlers[event];
-    }
-  }
-  return { instances, FakeTimeline };
+// jsdom has no layout: the view falls back to a 1000 px wide timeline starting at x = 0.
+const home = { start: new Date(2000, 0, 1), end: new Date(2010, 0, 1) };
+const school: Category = { id: "c1", name: "School", color: "#56a8f5" };
+const event = (fields: Partial<TimelineEvent>): TimelineEvent => ({
+  id: "e",
+  title: "Event",
+  description: "",
+  start: "2005-06-17",
+  end: null,
+  category_id: null,
+  created_at: "",
+  updated_at: "",
+  ...fields,
 });
-vi.mock("@/lib/timeline/vis", () => ({ loadVis: async () => ({ Timeline: vis.FakeTimeline }) }));
-vi.mock("vis-timeline/styles/vis-timeline-graph2d.min.css", () => ({}));
+const events = [
+  event({ id: "wedding", title: "Wedding", start: "2005-06-17" }),
+  event({ id: "school", title: "High school", start: "2001", end: "2004-06", category_id: "c1" }),
+  event({ id: "old", title: "Long ago", start: "1931-05-20" }),
+];
 
-const home = { start: new Date(1988, 0, 1), end: new Date(2029, 0, 1) };
-const item = (id: string): TimelineItem => ({
-  id,
-  content: id,
-  start: new Date(2015, 0, 1),
-  type: "point",
-  className: "me-item",
-  style: "",
-  title: id,
-});
-
-async function renderView(props: Partial<React.ComponentProps<typeof TimelineView>> = {}) {
+function renderView(props: Partial<React.ComponentProps<typeof TimelineView>> = {}) {
   const onSelect = vi.fn();
   const onAdd = vi.fn();
   const view = render(
-    <TimelineView items={[item("a")]} home={home} selectedId={null} onSelect={onSelect} onAdd={onAdd} {...props} />,
+    <TimelineView
+      events={events}
+      categories={[school]}
+      home={home}
+      selectedId={null}
+      onSelect={onSelect}
+      onAdd={onAdd}
+      {...props}
+    />,
   );
-  await waitFor(() => expect(vis.instances).toHaveLength(1));
-  return { ...view, onSelect, onAdd, timeline: vis.instances[0] };
+  return { ...view, onSelect, onAdd, timeline: screen.getByTestId("timeline") };
 }
 
-beforeEach(() => {
-  vis.instances.length = 0;
-});
+const item = (name: string) => within(screen.getByTestId("timeline")).getByRole("button", { name });
+const leftOf = (el: HTMLElement) => parseFloat(el.style.left);
+const scaleLabels = () =>
+  Array.from(screen.getByTestId("timeline").querySelectorAll("span.absolute")).map((s) => s.textContent ?? "");
 
 describe("TimelineView", () => {
-  it("creates the timeline in its container, opened on the home window", async () => {
-    const { timeline } = await renderView();
-    expect(timeline.container).toBe(screen.getByTestId("timeline"));
-    expect(timeline.options).toMatchObject({ start: home.start, end: home.end, selectable: true });
-    expect(timeline.items).toEqual([item("a")]);
+  it("shows events as labels and periods as bars, in their colours", () => {
+    renderView();
+    expect(PALETTE).toContain(item("Wedding").dataset.color);
+    expect(item("High school")).toHaveAttribute("data-color", "#56a8f5");
   });
 
-  it("rebuilds with the current items when a hidden route is shown again", async () => {
-    const onSelect = vi.fn();
-    const view = (mode: "visible" | "hidden") => (
-      <Activity mode={mode}>
-        <TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} onAdd={vi.fn()} />
-      </Activity>
-    );
-    const { rerender } = render(view("visible"));
-    await waitFor(() => expect(vis.instances).toHaveLength(1));
-    rerender(view("hidden"));
-    await waitFor(() => expect(vis.instances[0].destroy).toHaveBeenCalled());
-    rerender(view("visible"));
-    await waitFor(() => expect(vis.instances).toHaveLength(2));
-    expect(vis.instances[1].items).toEqual([item("a"), item("b")]);
-    expect(vis.instances[1].setSelection).toHaveBeenCalledWith(["b"]);
+  it("only renders what is on screen", () => {
+    renderView();
+    expect(within(screen.getByTestId("timeline")).queryByRole("button", { name: "Long ago" })).not.toBeInTheDocument();
   });
 
-  it("moves to the new home window when it changes", async () => {
-    const { timeline, rerender, onSelect } = await renderView();
-    const newHome = { start: new Date(1960, 0, 1), end: new Date(2030, 0, 1) };
-    // Same window, new objects: no jump.
-    rerender(<TimelineView items={[item("a")]} home={{ ...home }} selectedId={null} onSelect={onSelect} onAdd={vi.fn()} />);
-    rerender(<TimelineView items={[item("a")]} home={newHome} selectedId={null} onSelect={onSelect} onAdd={vi.fn()} />);
-    await waitFor(() => expect(timeline.setWindow).toHaveBeenCalledTimes(1));
-    expect(timeline.setWindow).toHaveBeenCalledWith(newHome.start.getTime(), newHome.end.getTime());
+  it("shows a time scale for the visible range", () => {
+    renderView();
+    expect(scaleLabels()).toEqual(expect.arrayContaining(["2000", "2005", "2010"]));
   });
 
-  it("redraws right after the first range change so it shows up without delay", async () => {
-    const { timeline } = await renderView();
-    expect(timeline.redraw).not.toHaveBeenCalled();
-    timeline.handlers.rangechanged({});
-    expect(timeline.redraw).toHaveBeenCalledTimes(1);
-    expect(timeline.handlers.rangechanged).toBeUndefined();
-  });
-
-  it("reports selection changes", async () => {
-    const { timeline, onSelect } = await renderView();
-    timeline.handlers.select({ items: ["a"] });
-    expect(onSelect).toHaveBeenCalledWith("a");
-    timeline.handlers.select({ items: [] });
+  it("selects an item on click and clears the selection on empty space", async () => {
+    const { onSelect, timeline } = renderView();
+    await userEvent.click(item("Wedding"));
+    expect(onSelect).toHaveBeenLastCalledWith("wedding");
+    await userEvent.click(item("High school"));
+    expect(onSelect).toHaveBeenLastCalledWith("school");
+    fireEvent.click(timeline);
     expect(onSelect).toHaveBeenLastCalledWith(null);
   });
 
-  it("pushes new items and the selection to the timeline", async () => {
-    const { timeline, rerender, onSelect } = await renderView();
-    rerender(<TimelineView items={[item("a"), item("b")]} home={home} selectedId="b" onSelect={onSelect} onAdd={vi.fn()} />);
-    await waitFor(() => expect(timeline.setItems).toHaveBeenLastCalledWith([item("a"), item("b")]));
-    expect(timeline.setSelection).toHaveBeenLastCalledWith(["b"]);
+  it("marks the selected item", () => {
+    renderView({ selectedId: "wedding" });
+    expect(item("Wedding")).toHaveAttribute("aria-pressed", "true");
+    expect(item("High school")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("asks to add an event when an empty spot is double-clicked", async () => {
-    const { timeline, onAdd } = await renderView();
-    timeline.handlers.doubleClick({ item: "a", time: new Date(2015, 5, 7) });
+  it("adds an event on the double-clicked day", () => {
+    const { onAdd, timeline } = renderView();
+    fireEvent.doubleClick(timeline, { clientX: 500 });
+    expect(onAdd).toHaveBeenCalledWith(expect.stringMatching(/^(2004-12|2005-01)-\d\d$/));
+  });
+
+  it("does not add an event when an item is double-clicked", () => {
+    const { onAdd } = renderView();
+    fireEvent.doubleClick(item("Wedding"));
     expect(onAdd).not.toHaveBeenCalled();
-    timeline.handlers.doubleClick({ item: null, time: new Date(2015, 5, 7, 18) });
-    expect(onAdd).toHaveBeenCalledWith("2015-06-07");
   });
 
-  it("has Home, Today and Fit all controls", async () => {
-    const { timeline } = await renderView();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Home" })).toBeEnabled());
-    await userEvent.click(screen.getByRole("button", { name: "Home" }));
-    expect(timeline.setWindow).toHaveBeenCalledWith(home.start, home.end);
-    await userEvent.click(screen.getByRole("button", { name: "Today" }));
-    expect(timeline.moveTo).toHaveBeenCalled();
+  it("zooms in with the mouse wheel around the cursor", async () => {
+    const { timeline } = renderView();
+    const before = leftOf(item("Wedding"));
+    fireEvent.wheel(timeline, { deltaY: -800, clientX: before });
+    await waitFor(() =>
+      expect(scaleLabels().some((label) => /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$/.test(label))).toBe(
+        true,
+      ),
+    );
+    // The point under the cursor stays put.
+    expect(Math.abs(leftOf(item("Wedding")) - before)).toBeLessThan(2);
+  });
+
+  it("pans with horizontal scrolling and by dragging", async () => {
+    const { timeline, onSelect } = renderView();
+    const start = leftOf(item("Wedding"));
+    fireEvent.wheel(timeline, { deltaX: 100, deltaY: 0 });
+    await waitFor(() => expect(leftOf(item("Wedding"))).toBeCloseTo(start - 100));
+
+    fireEvent.pointerDown(timeline, { pointerId: 1, clientX: 300 });
+    fireEvent.pointerMove(timeline, { pointerId: 1, clientX: 450 });
+    fireEvent.pointerUp(timeline, { pointerId: 1, clientX: 450 });
+    await waitFor(() => expect(leftOf(item("Wedding"))).toBeCloseTo(start + 50));
+    // The click that ends a drag doesn't clear the selection.
+    fireEvent.click(timeline);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("zooms with a two-finger pinch", async () => {
+    const { timeline } = renderView();
+    fireEvent.pointerDown(timeline, { pointerId: 1, clientX: 400 });
+    fireEvent.pointerDown(timeline, { pointerId: 2, clientX: 600 });
+    fireEvent.pointerMove(timeline, { pointerId: 2, clientX: 1400 });
+    await waitFor(() => expect(scaleLabels()).not.toContain("2000"));
+  });
+
+  it("applies many wheel events in one update per frame", async () => {
+    const { timeline } = renderView();
+    const start = leftOf(item("Wedding"));
+    for (let i = 0; i < 5; i++) fireEvent.wheel(timeline, { deltaX: 20, deltaY: 0 });
+    await waitFor(() => expect(leftOf(item("Wedding"))).toBeCloseTo(start - 100));
+  });
+
+  it("moves dots with the line instantly; only selection is animated", () => {
+    renderView({ selectedId: "wedding" });
+    const dot = screen.getByTestId("timeline").querySelector<HTMLElement>('[data-dot="wedding"]')!;
+    expect(dot.className).not.toMatch(/transition-all/);
+    expect(dot.className).toMatch(/transition-\[scale,box-shadow\]/);
+    expect(dot.style.scale).toBe("1.35");
+    expect(leftOf(dot) + 8).toBeCloseTo(leftOf(item("Wedding")));
+  });
+
+  it("has zoom, Home, Today and Fit all buttons", async () => {
+    renderView();
+    await userEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    // More years fit on screen: some from before 2000 appear.
+    await waitFor(() => expect(scaleLabels().some((label) => Number(label) < 2000)).toBe(true));
+
     await userEvent.click(screen.getByRole("button", { name: "Fit all" }));
-    expect(timeline.fit).toHaveBeenCalled();
+    await waitFor(() => expect(item("Long ago")).toBeInTheDocument());
+
+    // Each step waits for the end state of its animation before the next click.
+    const years = Array.from({ length: 11 }, (_, i) => String(2000 + i));
+    await userEvent.click(screen.getByRole("button", { name: "Home" }));
+    await waitFor(() => expect(scaleLabels().filter(Boolean)).toEqual(years));
+
+    // 10 years / 1.6 = 6.25 years around 2005 once the zoom has finished.
+    await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    await waitFor(() =>
+      expect(scaleLabels().filter(Boolean)).toEqual(["2002", "2003", "2004", "2005", "2006", "2007", "2008"]),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Today" }));
+    await waitFor(() => expect(scaleLabels().join(" ")).toContain(String(new Date().getFullYear())));
   });
 
-  it("destroys the timeline on unmount", async () => {
-    const { timeline, unmount } = await renderView();
-    unmount();
-    expect(timeline.destroy).toHaveBeenCalled();
+  it("moves to the new home range when it changes", async () => {
+    const { rerender, onSelect, onAdd } = renderView();
+    const newHome = { start: new Date(1925, 0, 1), end: new Date(1940, 0, 1) };
+    rerender(
+      <TimelineView
+        events={events}
+        categories={[school]}
+        home={newHome}
+        selectedId={null}
+        onSelect={onSelect}
+        onAdd={onAdd}
+      />,
+    );
+    await waitFor(() => expect(item("Long ago")).toBeInTheDocument());
   });
 });

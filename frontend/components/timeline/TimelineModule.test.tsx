@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TimelineItem } from "@/lib/timeline/items";
 import type { Category, TimelineEvent } from "@/lib/timeline/types";
 import { TimelineModule } from "./TimelineModule";
 
@@ -19,16 +18,15 @@ const mocks = vi.hoisted(() => ({
   },
   profileApi: { get: vi.fn() },
   viewProps: vi.fn(),
-  loadVis: vi.fn(),
 }));
-vi.mock("@/lib/timeline/vis", () => ({ loadVis: mocks.loadVis }));
 vi.mock("@/lib/timeline/api", () => ({ timelineApi: mocks.timelineApi, profileApi: mocks.profileApi }));
 vi.mock("@/lib/supabase", async () => ({ supabase: (await import("@/test/mocks")).supabaseMock }));
 
-// Stand-in for the vis-timeline view: one button per item, plus a "double-click" spot.
+// Stand-in for the timeline view: one button per event, plus a "double-click" spot.
 vi.mock("./TimelineView", () => ({
   TimelineView: (props: {
-    items: TimelineItem[];
+    events: TimelineEvent[];
+    categories: Category[];
     onSelect: (id: string | null) => void;
     onAdd: (start: string) => void;
     home: unknown;
@@ -36,9 +34,9 @@ vi.mock("./TimelineView", () => ({
     mocks.viewProps(props);
     return (
       <div data-testid="timeline">
-        {props.items.map((i) => (
-          <button key={i.id} onClick={() => props.onSelect(i.id)}>
-            {i.title}
+        {props.events.map((e) => (
+          <button key={e.id} onClick={() => props.onSelect(e.id)}>
+            {e.title}
           </button>
         ))}
         <button onClick={() => props.onAdd("2020-05-17")}>double-click 2020-05-17</button>
@@ -65,7 +63,6 @@ const events: TimelineEvent[] = [
 beforeEach(() => {
   mocks.timelineApi.listEvents.mockResolvedValue(events);
   mocks.timelineApi.listMedia.mockResolvedValue([]);
-  mocks.loadVis.mockResolvedValue({});
   mocks.timelineApi.listCategories.mockResolvedValue([school]);
   mocks.profileApi.get.mockResolvedValue({ display_name: null, birth_date: "1990-03-04" });
 });
@@ -76,12 +73,6 @@ describe("TimelineModule", () => {
     expect(screen.getByText("Loading timeline…")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "High school" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Born" })).toBeInTheDocument();
-  });
-
-  it("starts loading the timeline library together with the data", () => {
-    render(<TimelineModule />);
-    expect(mocks.loadVis).toHaveBeenCalled();
-    expect(mocks.timelineApi.listEvents).toHaveBeenCalled();
   });
 
   it("opens on the user's life when the birth date is known", async () => {
@@ -214,8 +205,8 @@ describe("TimelineModule", () => {
     await userEvent.click(within(panel).getByRole("button", { name: "Save" }));
     expect(mocks.timelineApi.updateCategory).toHaveBeenCalledWith("c1", { name: "School", color: "#dc2626" });
     await waitFor(() => {
-      const item = mocks.viewProps.mock.lastCall![0].items.find((i: TimelineItem) => i.id === "e1");
-      expect(item.style).toContain("#dc2626");
+      const { categories } = mocks.viewProps.mock.lastCall![0];
+      expect(categories.find((c: Category) => c.id === "c1").color).toBe("#dc2626");
     });
   });
 
