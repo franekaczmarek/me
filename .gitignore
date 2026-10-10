@@ -23,3 +23,7 @@ next-env.d.ts
 
 # Claude Code project notes (local only, never commit)
 CLAUDE.md
+
+# Playwright
+test-results/
+playwright-report/

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Blocks the commit if fast checks fail. Full suite incl. E2E: scripts/test.sh
+exec "$(git rev-parse --show-toplevel)/scripts/test.sh" --fast
