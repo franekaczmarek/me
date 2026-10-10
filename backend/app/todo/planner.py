@@ -249,16 +249,17 @@ def check_proposal(plan: ClaudePlan, context: dict[str, Any], tasks: list[Task])
 
 
 @lru_cache
-def _client(api_key: str) -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=api_key, timeout=180, max_retries=2)
+def _client(api_key: str, workspace_id: str) -> anthropic.Anthropic:
+    headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+    return anthropic.Anthropic(api_key=api_key, timeout=180, max_retries=2, default_headers=headers)
 
 
 def get_claude() -> anthropic.Anthropic:
     """The Claude client; 503 when no API key is configured. Overridden in tests."""
-    key = get_settings().anthropic_api_key
-    if not key:
+    settings = get_settings()
+    if not settings.anthropic_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Planning with Claude isn't set up (no API key).")
-    return _client(key)
+    return _client(settings.anthropic_api_key, settings.anthropic_workspace_id)
 
 
 ClaudeDep = Annotated[anthropic.Anthropic, Depends(get_claude)]
@@ -280,7 +281,7 @@ def ask_claude(client: anthropic.Anthropic, context: dict[str, Any]) -> ClaudePl
     except anthropic.RateLimitError as exc:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Claude is busy right now; try again in a minute.") from exc
     except anthropic.APIStatusError as exc:
-        logger.error("Claude API error %s (request %s)", exc.status_code, exc.request_id)
+        logger.error("Claude API error %s (request %s): %s", exc.status_code, exc.request_id, exc.message)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Claude couldn't make a plan right now.") from exc
     except anthropic.APIConnectionError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Can't reach Claude right now.") from exc

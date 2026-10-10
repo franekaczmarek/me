@@ -191,8 +191,17 @@ def queue_planning_data(fake_db: FakeSupabase, rows: list[dict]) -> None:
     fake_db.reply(200, [])  # days off
 
 
+def test_client_sends_the_workspace_header_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    planner._client.cache_clear()
+    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="k", anthropic_workspace_id="wrkspc_1"))
+    assert planner.get_claude().default_headers["anthropic-workspace-id"] == "wrkspc_1"
+    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="k", anthropic_workspace_id=""))
+    assert "anthropic-workspace-id" not in planner.get_claude().default_headers
+    planner._client.cache_clear()
+
+
 def test_plan_without_api_key_is_503(api: TestClient, fake_db: FakeSupabase, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key=""))
+    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="", anthropic_workspace_id=""))
     response = api.post("/todo/plan", json={"today": "2026-03-04"})
     assert response.status_code == 503
     assert "isn't set up" in response.json()["detail"]

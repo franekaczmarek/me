@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     # Claude API key for the to-do planner; the planner is unavailable without it.
     anthropic_api_key: str = ""
+    # Needed only for keys not scoped to a workspace (sent as the anthropic-workspace-id header).
+    anthropic_workspace_id: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
