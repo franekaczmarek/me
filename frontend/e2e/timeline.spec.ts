@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiClient, logIn, requireTestUser } from "./helpers";
+import { apiClient, logIn, PIXEL_PNG, requireTestUser } from "./helpers";
 
 // Timeline UI on the real stack. Data is seeded through the API and removed afterwards.
 test.beforeEach(() => requireTestUser());
@@ -148,5 +148,39 @@ test("a user manages categories and sees their colors on the timeline", async ({
     await api.delete(`/timeline/events/${event.id}`);
     const categories: { id: string; name: string }[] = await (await api.get("/timeline/categories")).json();
     for (const c of categories.filter((c) => c.name.toLowerCase() === tag)) await api.delete(`/timeline/categories/${c.id}`);
+  }
+});
+
+test("a user adds a photo to an event, captions it and deletes it", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const title = `e2e-${Date.now()} photo event`;
+  const event = await (await api.post("/timeline/events", { title, start: "2024-05-10" })).json();
+
+  try {
+    await page.reload();
+    await page.getByRole("button", { name: "Fit all" }).click();
+    await page.getByTestId("timeline").getByText(title).click();
+    const photos = page.getByRole("complementary", { name: "Event details" }).getByRole("region", { name: "Photos" });
+    await expect(photos.getByText("No photos yet.")).toBeVisible();
+
+    await photos.getByLabel("Add photos").setInputFiles({ name: "pixel.png", mimeType: "image/png", buffer: PIXEL_PNG });
+    const thumb = photos.getByRole("img", { name: "Event photo" });
+    await expect(thumb).toBeVisible();
+    // The signed thumbnail URL really loads from Supabase Storage.
+    await expect.poll(() => thumb.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
+
+    await thumb.click();
+    const viewer = page.getByRole("dialog", { name: "Photo" });
+    await viewer.getByLabel("Caption").fill("Tiny pixel");
+    await viewer.getByRole("button", { name: "Save caption" }).click();
+    await expect(photos.getByRole("list").getByRole("img", { name: "Tiny pixel" })).toBeVisible();
+
+    await viewer.getByRole("button", { name: "Delete…" }).click();
+    await viewer.getByRole("button", { name: "Delete photo" }).click();
+    await expect(viewer).toBeHidden();
+    await expect(photos.getByText("No photos yet.")).toBeVisible();
+  } finally {
+    await api.delete(`/timeline/events/${event.id}`);
   }
 });

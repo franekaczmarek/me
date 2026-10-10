@@ -40,3 +40,9 @@ export async function apiClient(page: Page, request: APIRequestContext) {
       request.post(`${API_URL}${path}`, { headers, multipart: { file, caption } }),
   };
 }
+
+/** 1x1 transparent PNG for upload tests. */
+export const PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);

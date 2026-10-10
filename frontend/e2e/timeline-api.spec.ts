@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { API_URL, apiClient, logIn, requireTestUser } from "./helpers";
+import { API_URL, apiClient, logIn, PIXEL_PNG, requireTestUser } from "./helpers";
 
 // Timeline API through the real stack: browser login -> FastAPI -> Supabase.
 // Becomes a UI flow once the timeline UI exists.
@@ -45,12 +45,6 @@ test("the timeline API rejects requests without a token", async ({ request }) =>
   expect((await request.get(`${API_URL}/timeline/events`)).status()).toBe(401);
   expect((await request.post(`${API_URL}/timeline/categories`, { data: {} })).status()).toBe(401);
 });
-
-// 1x1 transparent PNG.
-const PIXEL_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-  "base64",
-);
 
 test("a logged-in user adds, views and removes an event photo", async ({ page, request }) => {
   await logIn(page);

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     createCategory: vi.fn(),
     updateCategory: vi.fn(),
     deleteCategory: vi.fn(),
+    listMedia: vi.fn(),
   },
   profileApi: { get: vi.fn() },
   viewProps: vi.fn(),
@@ -61,6 +62,7 @@ const events: TimelineEvent[] = [
 
 beforeEach(() => {
   mocks.timelineApi.listEvents.mockResolvedValue(events);
+  mocks.timelineApi.listMedia.mockResolvedValue([]);
   mocks.timelineApi.listCategories.mockResolvedValue([school]);
   mocks.profileApi.get.mockResolvedValue({ display_name: null, birth_date: "1990-03-04" });
 });

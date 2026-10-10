@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Message } from "@/components/ui";
 import { formatSpan } from "@/lib/timeline/dates";
 import type { Category, TimelineEvent } from "@/lib/timeline/types";
+import { EventPhotos } from "./EventPhotos";
 
 type Props = {
   event: TimelineEvent;
@@ -67,6 +68,7 @@ export function EventDetails({ event, category, onEdit, onDelete }: Props) {
           </button>
         </div>
       )}
+      <EventPhotos eventId={event.id} />
     </div>
   );
 }

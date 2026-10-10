@@ -27,3 +27,16 @@ export type Profile = {
   display_name: string | null;
   birth_date: string | null;
 };
+
+export type Media = {
+  id: string;
+  event_id: string;
+  caption: string;
+  position: number;
+  width: number | null;
+  height: number | null;
+  /** Signed links, valid for about an hour. */
+  url: string | null;
+  thumb_url: string | null;
+  created_at: string;
+};
