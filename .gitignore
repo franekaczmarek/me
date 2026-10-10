@@ -20,3 +20,6 @@ next-env.d.ts
 .DS_Store
 .vscode/
 .idea/
+
+# Claude Code project notes (local only, never commit)
+CLAUDE.md
