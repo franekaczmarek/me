@@ -1,259 +1,234 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Message } from "@/components/ui";
-import { type DayOff, type WorkSchedule, calendarApi } from "@/lib/calendar/api";
-import { formatMinutes, parseDay } from "@/lib/todo/format";
+import { calendarApi, type DayOff } from "@/lib/calendar/api";
+import { formatTime, longDay, monthTitle } from "@/lib/calendar/format";
+import { addMonths, monthGrid, onDay, startOfMonth } from "@/lib/calendar/grid";
+import type { CalendarEvent, EventInput, Occurrence, Summary } from "@/lib/calendar/types";
+import { localToday } from "@/lib/todo/api";
+import { type EventDefaults, EventForm } from "./EventForm";
+import { MonthView } from "./MonthView";
+import { SummaryCard, UpcomingCard } from "./SideCards";
+import { WorkSettings } from "./WorkSettings";
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const RANGE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
-const card =
-  "rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.06)] dark:border-zinc-800 dark:bg-zinc-900";
-const input =
-  "rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-stone-400 dark:border-zinc-700 dark:bg-zinc-900";
+type Panel =
+  | { mode: "new"; defaults: EventDefaults }
+  | { mode: "edit"; event: CalendarEvent }
+  | { mode: "day"; day: string }
+  | { mode: "settings" }
+  | null;
 
-/** Work calendar for now: when you work and how much time you want for tasks (used to plan to-dos). */
+type Data = { occurrences: Occurrence[]; daysOff: DayOff[] };
+
+const panelCard =
+  "flex flex-col gap-4 rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.08)] dark:border-zinc-800 dark:bg-zinc-900";
+const secondary =
+  "rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
+const round =
+  "grid size-9 place-items-center rounded-full text-lg text-stone-600 transition hover:bg-white hover:shadow-sm dark:text-zinc-300 dark:hover:bg-zinc-900";
+
+/** A Google-Calendar-like calendar: the month grid in the middle, a month summary and upcoming events on the right. */
 export function CalendarModule() {
-  return (
-    <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:p-6 dark:bg-zinc-950">
-      <div className="mx-auto grid w-full max-w-4xl gap-4 md:grid-cols-2">
-        <ScheduleCard />
-        <DaysOffCard />
+  const [today] = useState(localToday);
+  const [cursor, setCursor] = useState(today);
+  const [data, setData] = useState<Data | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [attempt, setAttempt] = useState(0);
+  const sideRef = useRef<HTMLDivElement>(null);
+
+  const weeks = monthGrid(cursor);
+  const first = weeks[0][0];
+  const last = weeks[5][6];
+  const month = startOfMonth(cursor);
+
+  const reload = useCallback(
+    () =>
+      Promise.all([calendarApi.occurrences(first, last), calendarApi.daysOff(), calendarApi.summary(month, today)]).then(
+        ([occurrences, daysOff, sum]) => {
+          setData({ occurrences, daysOff });
+          setSummary(sum);
+        },
+      ),
+    [first, last, month, today],
+  );
+
+  useEffect(() => {
+    reload().catch((e: Error) => setError(`Could not load your calendar: ${e.message}`));
+  }, [reload, attempt]);
+
+  // On small screens the side column sits below the grid: bring an opened panel into view.
+  useEffect(() => {
+    if (panel) sideRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [panel]);
+
+  async function openEvent(id: string) {
+    setActionError(null);
+    try {
+      setPanel({ mode: "edit", event: await calendarApi.event(id) });
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  }
+
+  async function save(input: EventInput) {
+    if (panel?.mode === "edit") await calendarApi.saveEvent(panel.event.id, input);
+    else await calendarApi.createEvent(input);
+    await reload();
+    setPanel(null);
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-start gap-3 p-6">
+        <Message kind="error">{error}</Message>
+        <Button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </Button>
       </div>
-      <p className="mx-auto max-w-4xl text-center text-xs text-stone-500">
-        The full calendar view comes later. For now this tells your to-do list (and its planner) how much time each day has.
-      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setCursor(today)} className={secondary}>
+            Today
+          </button>
+          <div className="flex items-center">
+            <button type="button" aria-label="Previous month" onClick={() => setCursor(addMonths(cursor, -1))} className={round}>
+              ‹
+            </button>
+            <button type="button" aria-label="Next month" onClick={() => setCursor(addMonths(cursor, 1))} className={round}>
+              ›
+            </button>
+          </div>
+          <h1 className="mr-auto text-xl font-semibold text-stone-800 dark:text-zinc-100">{monthTitle(cursor)}</h1>
+          <button
+            type="button"
+            onClick={() => setPanel({ mode: "new", defaults: { date: cursor.slice(0, 7) === today.slice(0, 7) ? today : month } })}
+            className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
+          >
+            New event
+          </button>
+          <button type="button" aria-label="Work schedule and days off" title="Work schedule and days off" onClick={() => setPanel({ mode: "settings" })} className={round}>
+            ⚙
+          </button>
+        </div>
+        {actionError && <Message kind="error">{actionError}</Message>}
+        {data ? (
+          <MonthView
+            month={cursor}
+            today={today}
+            occurrences={data.occurrences}
+            daysOff={data.daysOff}
+            onCreate={(day) => setPanel({ mode: "new", defaults: { date: day } })}
+            onOpen={(o) => openEvent(o.id)}
+            onShowDay={(day) => setPanel({ mode: "day", day })}
+          />
+        ) : (
+          <p className="p-6 text-sm text-stone-500">Loading your calendar…</p>
+        )}
+      </div>
+
+      <div ref={sideRef} className="flex w-full scroll-mt-4 flex-col gap-4 md:w-96">
+        {panel?.mode === "new" || panel?.mode === "edit" ? (
+          <aside aria-label={panel.mode === "new" ? "New event" : "Edit event"} className={panelCard}>
+            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{panel.mode === "new" ? "New event" : "Edit event"}</p>
+            <EventForm
+              key={panel.mode === "edit" ? panel.event.id : `new-${panel.defaults.date}`}
+              event={panel.mode === "edit" ? panel.event : undefined}
+              defaults={panel.mode === "new" ? panel.defaults : undefined}
+              submitLabel={panel.mode === "new" ? "Add event" : "Save changes"}
+              onSave={save}
+              onCancel={() => setPanel(null)}
+              onDelete={
+                panel.mode === "edit"
+                  ? async () => {
+                      await calendarApi.deleteEvent(panel.event.id);
+                      await reload();
+                      setPanel(null);
+                    }
+                  : undefined
+              }
+            />
+          </aside>
+        ) : panel?.mode === "day" ? (
+          <DayPanel
+            day={panel.day}
+            occurrences={onDay(data?.occurrences ?? [], panel.day)}
+            onOpen={(o) => openEvent(o.id)}
+            onAdd={() => setPanel({ mode: "new", defaults: { date: panel.day } })}
+            onClose={() => setPanel(null)}
+          />
+        ) : panel?.mode === "settings" ? (
+          <>
+            <button type="button" onClick={() => setPanel(null)} className={`${secondary} self-start`}>
+              ← Back to summary
+            </button>
+            <WorkSettings onChanged={() => reload().catch(() => {})} />
+          </>
+        ) : (
+          <>
+            <SummaryCard summary={summary?.month ?? null} />
+            <UpcomingCard upcoming={summary?.upcoming ?? null} onOpen={(item) => openEvent(item.id)} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function ScheduleCard() {
-  const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+type DayPanelProps = {
+  day: string;
+  occurrences: Occurrence[];
+  onOpen: (o: Occurrence) => void;
+  onAdd: () => void;
+  onClose: () => void;
+};
 
-  useEffect(() => {
-    calendarApi
-      .schedule()
-      .then(setSchedule)
-      .catch((e: Error) => setError(`Could not load your schedule: ${e.message}`));
-  }, []);
-
-  if (!schedule) {
-    return (
-      <section aria-label="Work schedule" className={card}>
-        {error ? <Message kind="error">{error}</Message> : <p className="text-sm text-stone-500">Loading…</p>}
-      </section>
-    );
-  }
-
-  const set = (change: Partial<WorkSchedule>) => {
-    setInfo(null);
-    setSchedule({ ...schedule, ...change });
-  };
-  const toggleDay = (d: number) =>
-    set({
-      work_days: schedule.work_days.includes(d)
-        ? schedule.work_days.filter((x) => x !== d)
-        : [...schedule.work_days, d].sort(),
-    });
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    if (!schedule) return;
-    if (schedule.work_end.slice(0, 5) <= schedule.work_start.slice(0, 5)) {
-      return setError("Work must end after it starts.");
-    }
-    setError(null);
-    setPending(true);
-    try {
-      setSchedule(await calendarApi.saveSchedule(schedule));
-      setInfo("Schedule saved.");
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setPending(false);
-    }
-  }
-
+function DayPanel({ day, occurrences, onOpen, onAdd, onClose }: DayPanelProps) {
   return (
-    <section aria-label="Work schedule" className={card}>
-      <form onSubmit={save} className="flex flex-col gap-4" noValidate>
-        <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">Work schedule</h2>
-        {error && <Message kind="error">{error}</Message>}
-        {info && <Message kind="info">{info}</Message>}
-
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-1 text-sm font-medium text-stone-600 dark:text-zinc-300">Work days</legend>
-          <div className="flex flex-wrap gap-1.5">
-            {DAYS.map((name, i) => (
-              <button
-                key={name}
-                type="button"
-                aria-pressed={schedule.work_days.includes(i + 1)}
-                onClick={() => toggleDay(i + 1)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                  schedule.work_days.includes(i + 1)
-                    ? "bg-[#56a8f5] text-white shadow-[0_4px_12px_rgba(86,168,245,0.35)]"
-                    : "bg-stone-100 text-stone-500 dark:bg-zinc-800 dark:text-zinc-400"
-                }`}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <div className="flex items-center gap-2 text-sm text-stone-600 dark:text-zinc-300">
-          <label className="flex items-center gap-2">
-            From
-            <input
-              type="time"
-              aria-label="Work starts"
-              value={schedule.work_start.slice(0, 5)}
-              onChange={(e) => set({ work_start: e.target.value })}
-              className={input}
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            to
-            <input
-              type="time"
-              aria-label="Work ends"
-              value={schedule.work_end.slice(0, 5)}
-              onChange={(e) => set({ work_end: e.target.value })}
-              className={input}
-            />
-          </label>
-        </div>
-
-        <TimeForTasks
-          label="Time for tasks on a work day"
-          minutes={schedule.task_minutes_workday}
-          onChange={(m) => set({ task_minutes_workday: m })}
-        />
-        <TimeForTasks
-          label="Time for tasks on a day off"
-          minutes={schedule.task_minutes_day_off}
-          onChange={(m) => set({ task_minutes_day_off: m })}
-        />
-
-        <Button type="submit" disabled={pending} className="self-start rounded-full">
-          {pending ? "Saving…" : "Save schedule"}
-        </Button>
-      </form>
-    </section>
-  );
-}
-
-function TimeForTasks({ label, minutes, onChange }: { label: string; minutes: number; onChange: (m: number) => void }) {
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="flex justify-between text-stone-600 dark:text-zinc-300">
-        {label}
-        <span className="font-semibold text-stone-800 dark:text-zinc-100">{formatMinutes(minutes)}</span>
-      </span>
-      <input
-        type="range"
-        aria-label={label}
-        min={0}
-        max={720}
-        step={15}
-        value={minutes}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="accent-[#ff7a6b]"
-      />
-    </label>
-  );
-}
-
-function DaysOffCard() {
-  const [daysOff, setDaysOff] = useState<DayOff[] | null>(null);
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [label, setLabel] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    calendarApi
-      .daysOff()
-      .then(setDaysOff)
-      .catch((e: Error) => setError(`Could not load days off: ${e.message}`));
-  }, []);
-
-  async function run(action: () => Promise<unknown>) {
-    setError(null);
-    try {
-      await action();
-      setDaysOff(await calendarApi.daysOff());
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      return false;
-    }
-  }
-
-  async function add(e: React.FormEvent) {
-    e.preventDefault();
-    if (!start) return setError("Choose the first day off.");
-    const last = end || start;
-    if (last < start) return setError("The last day can't be before the first one.");
-    if (await run(() => calendarApi.addDayOff({ start_date: start, end_date: last, label: label.trim() }))) {
-      setStart("");
-      setEnd("");
-      setLabel("");
-    }
-  }
-
-  const span = (d: DayOff) =>
-    d.start_date === d.end_date
-      ? RANGE.format(parseDay(d.start_date))
-      : `${RANGE.format(parseDay(d.start_date))} – ${RANGE.format(parseDay(d.end_date))}`;
-
-  return (
-    <section aria-label="Days off" className={card}>
-      <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">Days off</h2>
-      <p className="mt-1 text-xs text-stone-500">Vacations and holidays get your day-off time for tasks.</p>
-      {error && (
-        <div className="mt-3">
-          <Message kind="error">{error}</Message>
-        </div>
-      )}
-      <ul className="mt-3 flex flex-col gap-1">
-        {daysOff?.length === 0 && <li className="text-sm text-stone-500">No days off planned.</li>}
-        {daysOff?.map((d) => (
-          <li key={d.id} className="flex items-center gap-3 rounded-2xl bg-[#f2c14e]/10 px-3 py-2">
-            <span aria-hidden>🌴</span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-stone-800 dark:text-zinc-100">{d.label || "Day off"}</p>
-              <p className="text-xs text-stone-500">{span(d)}</p>
-            </div>
-            <button
-              type="button"
-              aria-label={`Remove ${d.label || "day off"} (${span(d)})`}
-              onClick={() => run(() => calendarApi.deleteDayOff(d.id))}
-              className="rounded-full px-2 text-stone-400 hover:bg-stone-100 hover:text-red-600 dark:hover:bg-zinc-800"
-            >
-              ×
-            </button>
-          </li>
-        ))}
-      </ul>
-      <form onSubmit={add} noValidate className="mt-4 flex flex-col gap-2 rounded-2xl bg-stone-50 p-3 dark:bg-zinc-800/50">
-        <input aria-label="What is it" placeholder="e.g. Summer vacation" value={label} maxLength={100} onChange={(e) => setLabel(e.target.value)} className={input} />
-        <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600 dark:text-zinc-300">
-          <input type="date" aria-label="First day off" value={start} onChange={(e) => setStart(e.target.value)} className={input} />
-          –
-          <input type="date" aria-label="Last day off" value={end} min={start} onChange={(e) => setEnd(e.target.value)} className={input} />
-        </div>
-        <button
-          type="submit"
-          className="self-start rounded-full bg-stone-800 px-4 py-1.5 text-sm font-medium text-white transition hover:-translate-y-0.5 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          Add days off
+    <aside aria-label={longDay(day)} className={panelCard}>
+      <header className="flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">{longDay(day)}</h2>
+        <button type="button" onClick={onClose} aria-label="Close" className="rounded-full px-2 text-stone-400 hover:bg-stone-100 dark:hover:bg-zinc-800">
+          ×
         </button>
-      </form>
-    </section>
+      </header>
+      {occurrences.length === 0 ? (
+        <p className="text-sm text-stone-500">Nothing planned.</p>
+      ) : (
+        <ul className="flex flex-col">
+          {occurrences.map((o) => (
+            <li key={`${o.id}-${o.occurrence_date}`}>
+              <button type="button" onClick={() => onOpen(o)} className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left hover:bg-stone-50 dark:hover:bg-zinc-800/60">
+                <span className="h-8 w-1.5 shrink-0 rounded-full" style={{ background: o.color }} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-stone-800 dark:text-zinc-100">{o.title}</span>
+                  <span className="block text-xs text-stone-500">
+                    {o.all_day ? "All day" : `${formatTime(o.start_time!)} – ${formatTime(o.end_time!)}`}
+                    {o.location && ` · ${o.location}`}
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" onClick={onAdd} className={`${secondary} self-start`}>
+        + Add event
+      </button>
+    </aside>
   );
 }

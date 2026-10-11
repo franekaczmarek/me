@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CalendarEvent, Occurrence, Summary } from "@/lib/calendar/types";
 import { CalendarModule } from "./CalendarModule";
 
 const calendarApi = vi.hoisted(() => ({
@@ -9,93 +10,157 @@ const calendarApi = vi.hoisted(() => ({
   daysOff: vi.fn(),
   addDayOff: vi.fn(),
   deleteDayOff: vi.fn(),
+  occurrences: vi.fn(),
+  event: vi.fn(),
+  createEvent: vi.fn(),
+  saveEvent: vi.fn(),
+  deleteEvent: vi.fn(),
+  summary: vi.fn(),
 }));
 vi.mock("@/lib/calendar/api", () => ({ calendarApi }));
+vi.mock("@/lib/todo/api", () => ({ localToday: () => "2026-10-11" }));
 
-const schedule = {
-  work_days: [1, 2, 3, 4, 5],
-  work_start: "09:00:00",
-  work_end: "17:00:00",
-  task_minutes_workday: 180,
-  task_minutes_day_off: 360,
+const birthday: CalendarEvent = {
+  id: "e1",
+  title: "Mom's birthday",
+  notes: "",
+  location: "",
+  start_date: "1965-10-25",
+  end_date: "1965-10-25",
+  start_time: null,
+  end_time: null,
+  color: "#f27fb2",
+  recurrence: "yearly",
+  recurrence_until: null,
+  add_to_timeline: false,
+  timeline_event_id: null,
 };
-const vacation = { id: "d1", start_date: "2026-08-01", end_date: "2026-08-14", label: "Vacation" };
+const occurrence = (event: CalendarEvent, date: string, extra: Partial<Occurrence> = {}): Occurrence => ({
+  ...event,
+  start_date: date,
+  end_date: date,
+  all_day: event.start_time === null,
+  occurrence_date: date,
+  ...extra,
+});
+const doctor: CalendarEvent = { ...birthday, id: "e2", title: "Doctor", start_date: "2026-10-14", end_date: "2026-10-14", start_time: "15:30:00", end_time: "16:30:00", color: "#56a8f5", recurrence: "none" };
+const summary: Summary = {
+  month: { month: "2026-10-01", events: 2, event_minutes: 60, busiest_day: "2026-10-14", busiest_day_events: 1, days_off: 0, tasks_done: 3, tasks_open: 2, tasks_overdue: 1 },
+  upcoming: [{ id: "e1", title: "Mom's birthday", color: "#f27fb2", start_date: "2026-10-25", end_date: "2026-10-25", start_time: null, all_day: true, occurrence_date: "2026-10-25", days_until: 14, has_task: true }],
+};
 
 beforeEach(() => {
-  calendarApi.schedule.mockResolvedValue(schedule);
-  calendarApi.saveSchedule.mockImplementation(async (s) => s);
-  calendarApi.daysOff.mockResolvedValue([vacation]);
-  calendarApi.addDayOff.mockResolvedValue(undefined);
-  calendarApi.deleteDayOff.mockResolvedValue(undefined);
+  calendarApi.occurrences.mockResolvedValue([occurrence(doctor, "2026-10-14"), occurrence(birthday, "2026-10-25")]);
+  calendarApi.daysOff.mockResolvedValue([{ id: "d1", start_date: "2026-10-30", end_date: "2026-10-30", label: "Holiday" }]);
+  calendarApi.summary.mockResolvedValue(summary);
+  calendarApi.event.mockImplementation(async (id: string) => (id === "e1" ? birthday : doctor));
+  calendarApi.createEvent.mockResolvedValue(doctor);
+  calendarApi.saveEvent.mockResolvedValue(doctor);
+  calendarApi.deleteEvent.mockResolvedValue(undefined);
+  calendarApi.schedule.mockResolvedValue({ work_days: [1, 2, 3, 4, 5], work_start: "09:00:00", work_end: "17:00:00", task_minutes_workday: 180, task_minutes_day_off: 360 });
 });
 
-const scheduleCard = () => screen.getByRole("region", { name: "Work schedule" });
+const grid = () => screen.getByRole("grid", { name: "Month" });
+const findGrid = () => screen.findByRole("grid", { name: "Month" });
 
 describe("CalendarModule", () => {
-  it("edits and saves the work schedule", async () => {
+  it("shows the month with events, days off and the side cards", async () => {
     render(<CalendarModule />);
-    const card = await screen.findByRole("region", { name: "Work schedule" });
-    await within(card).findByRole("button", { name: "Mon" });
-    expect(within(card).getByRole("button", { name: "Sat" })).toHaveAttribute("aria-pressed", "false");
+    expect(await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
+    expect(within(grid()).getByRole("button", { name: "Mom's birthday" })).toBeInTheDocument();
+    expect(within(grid()).getByText("🌴 Holiday")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "October 2026", level: 1 })).toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenCalledWith("2026-09-28", "2026-11-08");
+    expect(calendarApi.summary).toHaveBeenCalledWith("2026-10-01", "2026-10-11");
 
-    await userEvent.click(within(card).getByRole("button", { name: "Fri" }));
-    await userEvent.click(within(card).getByRole("button", { name: "Sat" }));
-    fireEvent.change(within(card).getByLabelText("Work starts"), { target: { value: "08:00" } });
-    fireEvent.change(within(card).getByLabelText("Time for tasks on a work day"), { target: { value: "120" } });
-    expect(within(card).getByText("2h")).toBeInTheDocument();
-    await userEvent.click(within(card).getByRole("button", { name: "Save schedule" }));
-
-    expect(calendarApi.saveSchedule).toHaveBeenCalledWith({
-      ...schedule,
-      work_days: [1, 2, 3, 4, 6],
-      work_start: "08:00",
-      task_minutes_workday: 120,
-    });
-    expect(await within(card).findByText("Schedule saved.")).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "Month summary" });
+    expect(within(card).getByText("1h")).toBeInTheDocument();
+    expect(within(card).getByText("Overdue")).toBeInTheDocument();
+    expect(within(card).getByText("Busiest day: Wed 14 Oct (1 event)")).toBeInTheDocument();
+    const upcoming = screen.getByRole("region", { name: "Upcoming" });
+    expect(within(upcoming).getByText("in 14 days")).toBeInTheDocument();
+    expect(within(upcoming).getByText("✓ task")).toBeInTheDocument();
   });
 
-  it("rejects a work day that ends before it starts", async () => {
+  it("moves between months", async () => {
     render(<CalendarModule />);
-    const end = await within(await screen.findByRole("region", { name: "Work schedule" })).findByLabelText("Work ends");
-    fireEvent.change(end, { target: { value: "08:00" } });
-    await userEvent.click(within(scheduleCard()).getByRole("button", { name: "Save schedule" }));
-    expect(screen.getByText("Work must end after it starts.")).toBeInTheDocument();
-    expect(calendarApi.saveSchedule).not.toHaveBeenCalled();
+    await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" });
+    await userEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(screen.getByRole("heading", { name: "November 2026" })).toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenLastCalledWith("2026-10-26", "2026-12-06");
+    expect(calendarApi.summary).toHaveBeenLastCalledWith("2026-11-01", "2026-10-11");
+    await userEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    await userEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    expect(screen.getByRole("heading", { name: "September 2026" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByRole("heading", { name: "October 2026", level: 1 })).toBeInTheDocument();
   });
 
-  it("lists, adds and removes days off", async () => {
+  it("creates an event by clicking a day", async () => {
     render(<CalendarModule />);
-    const card = screen.getByRole("region", { name: "Days off" });
-    expect(await within(card).findByText("Vacation")).toBeInTheDocument();
-    expect(within(card).getByText("1 Aug 2026 – 14 Aug 2026")).toBeInTheDocument();
-
-    await userEvent.type(within(card).getByLabelText("What is it"), "Holiday");
-    fireEvent.change(within(card).getByLabelText("First day off"), { target: { value: "2026-11-11" } });
-    await userEvent.click(within(card).getByRole("button", { name: "Add days off" }));
-    expect(calendarApi.addDayOff).toHaveBeenCalledWith({ start_date: "2026-11-11", end_date: "2026-11-11", label: "Holiday" });
-
-    await userEvent.click(within(card).getByRole("button", { name: /Remove Vacation/ }));
-    expect(calendarApi.deleteDayOff).toHaveBeenCalledWith("d1");
+    await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" });
+    await userEvent.click(within(grid()).getByRole("gridcell", { name: "Thursday 22 October" }));
+    const panel = screen.getByRole("complementary", { name: "New event" });
+    expect(within(panel).getByLabelText("Starts")).toHaveValue("2026-10-22");
+    await userEvent.type(within(panel).getByLabelText("Title"), "Haircut");
+    await userEvent.click(within(panel).getByLabelText("All day"));
+    await userEvent.click(within(panel).getByRole("button", { name: "Add event" }));
+    expect(calendarApi.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Haircut", start_date: "2026-10-22", end_date: "2026-10-22", start_time: "09:00", end_time: "10:00" }),
+    );
+    expect(screen.queryByRole("complementary", { name: "New event" })).not.toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenCalledTimes(2);
   });
 
-  it("validates days off", async () => {
+  it("edits and deletes a whole event", async () => {
     render(<CalendarModule />);
-    const card = screen.getByRole("region", { name: "Days off" });
-    await within(card).findByText("Vacation");
-    await userEvent.click(within(card).getByRole("button", { name: "Add days off" }));
-    expect(within(card).getByText("Choose the first day off.")).toBeInTheDocument();
-    fireEvent.change(within(card).getByLabelText("First day off"), { target: { value: "2026-11-11" } });
-    fireEvent.change(within(card).getByLabelText("Last day off"), { target: { value: "2026-11-01" } });
-    await userEvent.click(within(card).getByRole("button", { name: "Add days off" }));
-    expect(within(card).getByText("The last day can't be before the first one.")).toBeInTheDocument();
-    expect(calendarApi.addDayOff).not.toHaveBeenCalled();
+    await userEvent.click(await within(await findGrid()).findByRole("button", { name: "Mom's birthday" }));
+    const panel = await screen.findByRole("complementary", { name: "Edit event" });
+    expect(calendarApi.event).toHaveBeenCalledWith("e1");
+    expect(within(panel).getByLabelText("Starts")).toHaveValue("1965-10-25");
+    expect(within(panel).getByText("Changes apply to every repeat of this event.")).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Lavender" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Save changes" }));
+    expect(calendarApi.saveEvent).toHaveBeenCalledWith("e1", expect.objectContaining({ color: "#9b87f5", recurrence: "yearly" }));
+
+    await userEvent.click(within(grid()).getByRole("button", { name: "Mom's birthday" }));
+    const again = await screen.findByRole("complementary", { name: "Edit event" });
+    await userEvent.click(within(again).getByRole("button", { name: "Delete…" }));
+    await userEvent.click(within(again).getByRole("button", { name: "Delete every repeat" }));
+    expect(calendarApi.deleteEvent).toHaveBeenCalledWith("e1");
   });
 
-  it("shows loading errors", async () => {
-    calendarApi.schedule.mockRejectedValue(new Error("down"));
-    calendarApi.daysOff.mockRejectedValue(new Error("down"));
+  it("opens an upcoming event", async () => {
     render(<CalendarModule />);
-    expect(await screen.findByText("Could not load your schedule: down")).toBeInTheDocument();
-    expect(await screen.findByText("Could not load days off: down")).toBeInTheDocument();
+    const upcoming = screen.getByRole("region", { name: "Upcoming" });
+    await userEvent.click(await within(upcoming).findByText("Mom's birthday"));
+    expect(await screen.findByRole("complementary", { name: "Edit event" })).toBeInTheDocument();
+  });
+
+  it("lists a day and shows what does not fit", async () => {
+    const many = ["A", "B", "C", "D", "E"].map((t, i) => occurrence({ ...doctor, id: `m${i}`, title: t }, "2026-10-14"));
+    calendarApi.occurrences.mockResolvedValue(many);
+    render(<CalendarModule />);
+    await userEvent.click(await within(await findGrid()).findByRole("button", { name: "+2 more" }));
+    const day = screen.getByRole("complementary", { name: "Wednesday 14 October" });
+    expect(within(day).getAllByRole("listitem")).toHaveLength(5);
+    await userEvent.click(within(day).getByRole("button", { name: "+ Add event" }));
+    expect(within(screen.getByRole("complementary", { name: "New event" })).getByLabelText("Starts")).toHaveValue("2026-10-14");
+  });
+
+  it("opens the work schedule settings", async () => {
+    render(<CalendarModule />);
+    await userEvent.click(screen.getByRole("button", { name: "Work schedule and days off" }));
+    expect(await screen.findByRole("region", { name: "Work schedule" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "← Back to summary" }));
+    expect(screen.getByRole("region", { name: "Month summary" })).toBeInTheDocument();
+  });
+
+  it("offers to try again when loading fails", async () => {
+    calendarApi.occurrences.mockRejectedValueOnce(new Error("down"));
+    render(<CalendarModule />);
+    expect(await screen.findByText("Could not load your calendar: down")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
   });
 });

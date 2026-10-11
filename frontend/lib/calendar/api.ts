@@ -1,5 +1,6 @@
-// Backend calls for the work calendar (schedule and days off).
+// Backend calls for the calendar: events, side-card summary, work schedule and days off.
 import { api } from "@/lib/api";
+import type { CalendarEvent, EventInput, Occurrence, Summary } from "./types";
 
 export type WorkSchedule = {
   /** ISO weekdays, 1 = Monday … 7 = Sunday. */
@@ -21,4 +22,11 @@ export const calendarApi = {
   daysOff: () => api<DayOff[]>("/calendar/days-off"),
   addDayOff: (input: Omit<DayOff, "id">) => api<DayOff>("/calendar/days-off", json("POST", input)),
   deleteDayOff: (id: string) => api<void>(`/calendar/days-off/${id}`, { method: "DELETE" }),
+
+  occurrences: (start: string, end: string) => api<Occurrence[]>(`/calendar/events?start=${start}&end=${end}`),
+  event: (id: string) => api<CalendarEvent>(`/calendar/events/${id}`),
+  createEvent: (input: EventInput) => api<CalendarEvent>("/calendar/events", json("POST", input)),
+  saveEvent: (id: string, input: EventInput) => api<CalendarEvent>(`/calendar/events/${id}`, json("PUT", input)),
+  deleteEvent: (id: string) => api<void>(`/calendar/events/${id}`, { method: "DELETE" }),
+  summary: (month: string, today: string) => api<Summary>(`/calendar/summary?month=${month}&today=${today}`),
 };
