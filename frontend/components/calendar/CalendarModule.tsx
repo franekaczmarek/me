@@ -16,6 +16,7 @@ import { TaskRow } from "@/components/todo/TaskRow";
 import { type EventDefaults, EventForm } from "./EventForm";
 import { MonthView } from "./MonthView";
 import { SummaryCard, UpcomingCard } from "./SideCards";
+import { SmartEventAdd } from "./SmartEventAdd";
 import { SuggestDialog } from "./SuggestDialog";
 import { type TimeChange, TimeGrid } from "./TimeGrid";
 import { WorkSettings } from "./WorkSettings";
@@ -273,6 +274,7 @@ export function CalendarModule() {
               ⚙
             </button>
           </div>
+          <SmartEventAdd today={today} onAdded={() => reload().catch(() => {})} />
           {actionError && <Message kind="error">{actionError}</Message>}
           {!data ? null : view === "month" ? (
             <MonthView

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.calendar.quick_add import router as calendar_quick_add_router
 from app.calendar.router import router as calendar_router
 from app.calendar.suggest import router as calendar_suggest_router
 from app.calendar.summary import router as calendar_summary_router
@@ -36,6 +37,7 @@ app.include_router(todo_quick_add_router)
 app.include_router(calendar_router)
 app.include_router(calendar_summary_router)
 app.include_router(calendar_suggest_router)
+app.include_router(calendar_quick_add_router)
 
 
 @app.get("/health")

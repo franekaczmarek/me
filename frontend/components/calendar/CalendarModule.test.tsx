@@ -19,6 +19,7 @@ const calendarApi = vi.hoisted(() => ({
   summary: vi.fn(),
   suggest: vi.fn(),
   applySuggestions: vi.fn(),
+  parse: vi.fn(),
 }));
 vi.mock("@/lib/calendar/api", () => ({ calendarApi }));
 const todoApi = vi.hoisted(() => ({

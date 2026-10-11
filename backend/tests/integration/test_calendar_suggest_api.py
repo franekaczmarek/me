@@ -64,3 +64,20 @@ def test_live_claude_suggests_a_present_and_the_visit(api: TestClient) -> None:
     assert day(0) <= present["planned_date"] < day(20)
     assert any(s["planned_date"] == day(4) for s in by_event["Wizyta u lekarza"])
     assert "Siłownia" not in by_event
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("RUN_CLAUDE_TESTS") == "1" and get_settings().anthropic_api_key),
+    reason="Live Claude test: set RUN_CLAUDE_TESTS=1 and ANTHROPIC_API_KEY (costs money)",
+)
+def test_live_claude_reads_events_from_a_polish_note(api: TestClient) -> None:
+    today = date(2026, 10, 11)  # a Sunday
+    response = api.post(
+        "/calendar/parse", json={"text": "dentysta w czwartek o 15:30; urodziny Kasi 3 marca co roku", "today": today.isoformat()}
+    )
+    assert response.status_code == 200, response.text
+    events = {e["title"].lower(): e for e in response.json()["events"]}
+    dentist = next(e for t, e in events.items() if "dentyst" in t)
+    assert (dentist["start_date"], dentist["start_time"], dentist["end_time"]) == ("2026-10-15", "15:30:00", "16:30:00")
+    birthday = next(e for t, e in events.items() if "kasi" in t)
+    assert (birthday["start_date"], birthday["recurrence"], birthday["start_time"]) == ("2027-03-03", "yearly", None)

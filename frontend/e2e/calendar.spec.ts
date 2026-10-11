@@ -228,3 +228,30 @@ test("a user accepts Claude's task for a birthday, and the event shows it has a 
     await api.delete(`/calendar/events/${event.id}`);
   }
 });
+
+test("a user types events in plain words, reviews them and adds them", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const day = localDay(4);
+  // Claude's reading is stubbed (the live call is covered by the opt-in backend test); creating runs for real.
+  await page.route("**/calendar/parse", (route) =>
+    route.fulfill({
+      json: {
+        events: [
+          { title: "E2E dentist", start_date: day, end_date: day, start_time: "15:30:00", end_time: "16:30:00", recurrence: "none", color: "#56a8f5", location: "", notes: "" },
+        ],
+        warnings: [],
+      },
+    }),
+  );
+  try {
+    await page.getByRole("link", { name: "Calendar" }).click();
+    await page.getByLabel("Describe events").fill("dentist in four days at 15:30");
+    await page.getByRole("button", { name: "Read" }).click();
+    await page.getByRole("button", { name: "Add 1 event" }).click();
+    await expect(page.getByRole("region", { name: "Upcoming" }).getByText("E2E dentist")).toBeVisible();
+  } finally {
+    const all: { id: string; title: string }[] = await (await api.get(`/calendar/events?start=${localDay(0)}&end=${localDay(10)}`)).json();
+    for (const e of all.filter((e) => e.title.startsWith("E2E"))) await api.delete(`/calendar/events/${e.id}`);
+  }
+});

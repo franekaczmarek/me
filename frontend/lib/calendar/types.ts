@@ -66,3 +66,8 @@ export type Suggestion = {
 };
 
 export type SuggestResult = { suggestions: Suggestion[]; events: number; warnings: string[] };
+
+/** An event Claude read from a note (nothing saved yet). */
+export type EventDraft = Pick<EventInput, "title" | "start_date" | "end_date" | "start_time" | "end_time" | "recurrence" | "color" | "location" | "notes">;
+
+export type EventParseResult = { events: EventDraft[]; warnings: string[] };
