@@ -1,5 +1,6 @@
 // Calendar grid maths: month matrix (weeks start on Monday) and event bars laid out in lanes.
 import { addDays, daysBetween, parseDay } from "@/lib/todo/format";
+import type { Task } from "@/lib/todo/types";
 import type { Occurrence } from "./types";
 
 /** ISO weekday of a date: 1 = Monday … 7 = Sunday. */
@@ -23,8 +24,11 @@ export function monthGrid(day: string): string[][] {
   return Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, d) => addDays(first, w * 7 + d)));
 }
 
-export type Segment = {
-  occurrence: Occurrence;
+/** What can be laid out in a row of days: an event occurrence or a task (always one day, after events). */
+export type Layoutable = Pick<Occurrence, "start_date" | "end_date" | "all_day" | "start_time" | "title"> & { kind?: "task" };
+
+export type Segment<T extends Layoutable = Occurrence> = {
+  occurrence: T;
   /** 0–6 within the week. */
   startCol: number;
   endCol: number;
@@ -34,16 +38,17 @@ export type Segment = {
   continuesAfter: boolean;
 };
 
-/** Bars of one week: longer and all-day events first, each in the first free lane. */
-export function weekSegments(week: string[], occurrences: Occurrence[]): Segment[] {
+/** Bars of one week: longer and all-day events first, then timed ones, then tasks; each in the first free lane. */
+export function weekSegments<T extends Layoutable>(week: string[], items: T[]): Segment<T>[] {
   const first = week[0];
   const last = week[week.length - 1];
-  const visible = occurrences
+  const visible = items
     .filter((o) => o.start_date <= last && o.end_date >= first)
     .sort(
       (a, b) =>
         a.start_date.localeCompare(b.start_date) ||
         daysBetween(b.start_date, b.end_date) - daysBetween(a.start_date, a.end_date) ||
+        Number(a.kind === "task") - Number(b.kind === "task") ||
         Number(b.all_day) - Number(a.all_day) ||
         (a.start_time ?? "").localeCompare(b.start_time ?? "") ||
         a.title.localeCompare(b.title),
@@ -67,7 +72,7 @@ export function weekSegments(week: string[], occurrences: Occurrence[]): Segment
 }
 
 /** How many segments covering each day of the week are in lanes ≥ `shown` (hidden behind "+N more"). */
-export function hiddenPerDay(segments: Segment[], shown: number, days = 7): number[] {
+export function hiddenPerDay(segments: Segment<Layoutable>[], shown: number, days = 7): number[] {
   const hidden = Array<number>(days).fill(0);
   for (const s of segments) {
     if (s.lane < shown) continue;
@@ -158,3 +163,28 @@ export function layoutDay(occurrences: Occurrence[]): Placed[] {
   close();
   return placed;
 }
+
+// --- tasks in the calendar -----------------------------------------------------------
+
+/** A to-do task placed on its planned day like an all-day item. */
+export type TaskItem = Layoutable & { kind: "task"; task: Task; id: string; occurrence_date: string };
+
+export function taskItems(tasks: Task[]): TaskItem[] {
+  return tasks
+    .filter((t) => t.planned_date)
+    .map((task) => ({
+      kind: "task",
+      task,
+      id: `task-${task.id}`,
+      title: task.title,
+      start_date: task.planned_date!,
+      end_date: task.planned_date!,
+      occurrence_date: task.planned_date!,
+      all_day: true,
+      start_time: null,
+    }));
+}
+
+export type CalendarItem = Occurrence | TaskItem;
+
+export const isTask = (item: CalendarItem): item is TaskItem => (item as TaskItem).kind === "task";

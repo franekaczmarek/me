@@ -44,6 +44,8 @@ const day = (date: string, fields: Partial<Day> = {}): Day => ({
   is_work_day: true,
   capacity_min: 180,
   planned_min: 0,
+  event_min: 0,
+  events: [],
   tasks: [],
   ...fields,
 });
@@ -91,6 +93,27 @@ describe("TodoModule", () => {
     expect(within(overdue).getByText("Call the bank")).toBeInTheDocument();
     expect(card(/^Tomorrow/)).toBeInTheDocument();
     expect(within(card(/Inbox/)).getByText("Renew passport")).toBeInTheDocument();
+  });
+
+  it("shows calendar events on their day and counts their time", async () => {
+    todoApi.days.mockResolvedValue({
+      ...feed,
+      days: [
+        day(TODAY, {
+          planned_min: 60,
+          event_min: 120,
+          events: [{ id: "e1", title: "Dinner", color: "#9b87f5", start_time: "18:00:00", end_time: "20:00:00", all_day: false }],
+          tasks: [task({ id: "wine", title: "Buy wine", source_event_id: "e1", source_occurrence_date: TODAY })],
+        }),
+      ],
+    });
+    render(<TodoModule />);
+    const today = await screen.findByRole("region", { name: /^Today/ });
+    const events = within(today).getByRole("list", { name: "Events" });
+    expect(within(events).getByRole("link", { name: "Dinner, 18:00" })).toHaveAttribute("href", "/calendar");
+    expect(within(today).getByText("3h of 3h")).toHaveAttribute("title", "Tasks 1h + events 2h");
+    expect(within(today).getByRole("meter", { name: "Planned time" })).toHaveAttribute("aria-valuenow", "180");
+    expect(within(today).getByLabelText("From a calendar event")).toBeInTheDocument();
   });
 
   it("checks off and reopens tasks, then reloads", async () => {

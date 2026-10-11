@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEvent, Occurrence, Summary } from "@/lib/calendar/types";
+import type { Task } from "@/lib/todo/types";
 import { CalendarModule } from "./CalendarModule";
 
 const calendarApi = vi.hoisted(() => ({
@@ -18,7 +19,14 @@ const calendarApi = vi.hoisted(() => ({
   summary: vi.fn(),
 }));
 vi.mock("@/lib/calendar/api", () => ({ calendarApi }));
-vi.mock("@/lib/todo/api", () => ({ localToday: () => "2026-10-11" }));
+const todoApi = vi.hoisted(() => ({
+  tasks: vi.fn(),
+  updateTask: vi.fn(),
+  completeTask: vi.fn(),
+  reopenTask: vi.fn(),
+  deleteTask: vi.fn(),
+}));
+vi.mock("@/lib/todo/api", () => ({ localToday: () => "2026-10-11", todoApi }));
 
 const birthday: CalendarEvent = {
   id: "e1",
@@ -49,8 +57,34 @@ const summary: Summary = {
   upcoming: [{ id: "e1", title: "Mom's birthday", color: "#f27fb2", start_date: "2026-10-25", end_date: "2026-10-25", start_time: null, all_day: true, occurrence_date: "2026-10-25", days_until: 14, has_task: true }],
 };
 
+const wine: Task = {
+  id: "t1",
+  title: "Buy wine",
+  notes: "",
+  planned_date: "2026-10-13",
+  deadline: null,
+  duration_min: null,
+  priority: "high",
+  fixed_day: false,
+  status: "open",
+  completed_at: null,
+  first_planned_date: "2026-10-13",
+  postponed_count: 0,
+  routine_id: null,
+  occurrence_date: null,
+  position: 0,
+  created_at: "",
+  source_event_id: "e1",
+  source_occurrence_date: "2026-10-25",
+};
+
 beforeEach(() => {
   localStorage.clear();
+  todoApi.tasks.mockResolvedValue([wine]);
+  todoApi.updateTask.mockResolvedValue(wine);
+  todoApi.completeTask.mockResolvedValue(wine);
+  todoApi.reopenTask.mockResolvedValue(wine);
+  todoApi.deleteTask.mockResolvedValue(undefined);
   calendarApi.occurrences.mockResolvedValue([occurrence(doctor, "2026-10-14"), occurrence(birthday, "2026-10-25")]);
   calendarApi.daysOff.mockResolvedValue([{ id: "d1", start_date: "2026-10-30", end_date: "2026-10-30", label: "Holiday" }]);
   calendarApi.summary.mockResolvedValue(summary);
@@ -238,5 +272,39 @@ describe("CalendarModule", () => {
     resolveOld([occurrence(birthday, "2026-10-25")]);
     await new Promise((r) => setTimeout(r, 0));
     expect(within(grid()).getByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
+  });
+
+  it("shows tasks on their days: check off, edit, and list them with the day", async () => {
+    render(<CalendarModule />);
+    const month = await findGrid();
+    expect(todoApi.tasks).toHaveBeenCalledWith("2026-09-28", "2026-11-08");
+    await userEvent.click(await within(month).findByRole("checkbox", { name: "Complete Buy wine" }));
+    expect(todoApi.completeTask).toHaveBeenCalledWith("t1");
+
+    await userEvent.click(within(month).getByRole("button", { name: "Task: Buy wine" }));
+    const panel = screen.getByRole("complementary", { name: "Edit task" });
+    await userEvent.clear(within(panel).getByLabelText("Title"));
+    await userEvent.type(within(panel).getByLabelText("Title"), "Buy red wine");
+    await userEvent.click(within(panel).getByRole("button", { name: "Save changes" }));
+    expect(todoApi.updateTask).toHaveBeenCalledWith("t1", expect.objectContaining({ title: "Buy red wine" }));
+
+    calendarApi.occurrences.mockResolvedValue(["A", "B", "C"].map((t, i) => occurrence({ ...doctor, id: `m${i}`, title: t }, "2026-10-13")));
+    await userEvent.click(screen.getByRole("button", { name: "Next month" }));
+    await userEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    await userEvent.click(await within(await findGrid()).findByRole("button", { name: "+1 more" }));
+    const day = screen.getByRole("complementary", { name: "Tuesday 13 October" });
+    expect(within(within(day).getByRole("list", { name: "Tasks" })).getByText("Buy wine")).toBeInTheDocument();
+  });
+
+  it("moves a task by dropping it on another day", async () => {
+    render(<CalendarModule />);
+    const month = await findGrid();
+    const chip = await within(month).findByRole("button", { name: "Task: Buy wine" });
+    const target = within(month).getByRole("gridcell", { name: "Friday 16 October" });
+    document.elementFromPoint = vi.fn(() => target);
+    fireEvent.pointerDown(chip, { button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 300, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(todoApi.updateTask).toHaveBeenCalledWith("t1", { planned_date: "2026-10-16" });
   });
 });

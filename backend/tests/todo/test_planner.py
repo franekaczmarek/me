@@ -75,6 +75,7 @@ def test_context_lists_days_and_only_movable_tasks() -> None:
         "work_day": True,
         "available_min": 180,
         "booked_min": 20,
+        "events": [],
     }
     # Fixed task + routine (no estimate → 30 min) book Thursday.
     assert context["days"][1]["booked_min"] == 120
@@ -281,3 +282,28 @@ def test_apply_rejects_past_days(api: TestClient, fake_db: FakeSupabase) -> None
     )
     assert response.status_code == 422
     assert fake_db.requests == []
+
+
+def test_context_lists_events_and_their_time() -> None:
+    from datetime import time
+
+    from app.calendar.schemas import Event, to_occurrence
+
+    def event(title: str, start: date, times: tuple[time, time] | None = None) -> Event:
+        return Event(
+            id=uuid4(),
+            title=title,
+            start_date=start,
+            end_date=start,
+            start_time=times[0] if times else None,
+            end_time=times[1] if times else None,
+        )
+
+    dinner = event("Dinner", day(0), (time(18), time(20)))
+    birthday = event("Mom's birthday", day(1))
+    events = [to_occurrence(e, e.span()) for e in (dinner, birthday)]
+    context = build_context([task("A")], TODAY, 7, DEFAULT_SCHEDULE, [], events)
+    assert context["days"][0]["events"] == ["Dinner (18:00–20:00)"]
+    assert context["days"][0]["available_min"] == 180 - 120
+    assert context["days"][1]["events"] == ["Mom's birthday (all day)"]
+    assert context["days"][1]["available_min"] == 180

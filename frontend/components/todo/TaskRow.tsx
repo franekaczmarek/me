@@ -67,6 +67,11 @@ export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Prop
             📌
           </span>
         )}
+        {task.source_event_id && (
+          <span aria-label="From a calendar event" title="Made for a calendar event" className="mr-1.5">
+            📅
+          </span>
+        )}
         {task.title}
       </button>
 

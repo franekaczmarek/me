@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DayOff } from "@/lib/calendar/api";
 import { formatTime, longDay } from "@/lib/calendar/format";
 import {
+  type CalendarItem,
   isTimedSingleDay,
   layoutDay,
   MINUTES_PER_DAY,
@@ -11,13 +12,16 @@ import {
   type Placed,
   SNAP,
   snap,
+  taskItems,
   timeOf,
   weekSegments,
 } from "@/lib/calendar/grid";
 import type { Occurrence } from "@/lib/calendar/types";
 import { darken, lighten, withAlpha } from "@/lib/colors";
+import type { Task } from "@/lib/todo/types";
+import { useIsOver } from "@/components/todo/dnd";
 import type { EventDefaults } from "./EventForm";
-import { EventBar } from "./MonthView";
+import { Item } from "./MonthView";
 
 /** Pixels per hour. */
 export const HOUR_PX = 48;
@@ -33,6 +37,7 @@ type Props = {
   days: string[];
   today: string;
   occurrences: Occurrence[];
+  tasks: Task[];
   daysOff: DayOff[];
   /** Work hours, minutes from midnight: shaded outside, scrolled to on open. */
   workStart: number;
@@ -41,6 +46,8 @@ type Props = {
   onOpen: (occurrence: Occurrence) => void;
   /** A timed event was dragged (moved or resized). */
   onMove: (occurrence: Occurrence, change: TimeChange) => void;
+  onToggleTask: (task: Task) => void;
+  onOpenTask: (task: Task) => void;
   onShowDay?: (day: string) => void;
 };
 
@@ -63,7 +70,8 @@ const nowMinutes = () => {
   return d.getHours() * 60 + d.getMinutes();
 };
 
-export function TimeGrid({ days, today, occurrences, daysOff, workStart, workEnd, onCreate, onOpen, onMove, onShowDay }: Props) {
+export function TimeGrid(props: Props) {
+  const { days, today, occurrences, tasks, daysOff, workStart, workEnd, onCreate, onOpen, onMove, onToggleTask, onOpenTask, onShowDay } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const columns = useRef<(HTMLDivElement | null)[]>([]);
   const ghost = useRef<HTMLDivElement>(null);
@@ -82,7 +90,7 @@ export function TimeGrid({ days, today, occurrences, daysOff, workStart, workEnd
     if (scroller.current) scroller.current.scrollTop = Math.max(0, (workStart - 60) * PX - 8);
   }, [workStart]);
 
-  const allDay = occurrences.filter((o) => !isTimedSingleDay(o));
+  const allDay: CalendarItem[] = [...occurrences.filter((o) => !isTimedSingleDay(o)), ...taskItems(tasks)];
   const segments = weekSegments(days, allDay);
   const lanes = segments.reduce((n, s) => Math.max(n, s.lane + 1), 0);
   const template = { gridTemplateColumns: `3.5rem repeat(${days.length}, minmax(0, 1fr))` };
@@ -232,13 +240,7 @@ export function TimeGrid({ days, today, occurrences, daysOff, workStart, workEnd
         <div className="relative" style={{ gridColumn: `2 / span ${days.length}` }}>
           <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
             {days.map((day) => (
-              <div
-                key={day}
-                data-all-day={day}
-                aria-hidden
-                onClick={() => onCreate({ date: day })}
-                className="cursor-pointer border-l border-stone-100 hover:bg-stone-50/80 dark:border-zinc-800 dark:hover:bg-zinc-800/40"
-              />
+              <AllDayCell key={day} day={day} onClick={() => onCreate({ date: day })} />
             ))}
           </div>
           <div
@@ -246,7 +248,7 @@ export function TimeGrid({ days, today, occurrences, daysOff, workStart, workEnd
             style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${Math.max(lanes, 1)}, 1.4rem)` }}
           >
             {segments.map((s) => (
-              <EventBar key={`${s.occurrence.id}-${s.occurrence.occurrence_date}`} segment={s} onOpen={onOpen} rowOffset={1} />
+              <Item key={`${s.occurrence.id}-${s.occurrence.occurrence_date}`} segment={s} rowOffset={1} onOpen={onOpen} onToggleTask={onToggleTask} onOpenTask={onOpenTask} />
             ))}
           </div>
         </div>
@@ -304,6 +306,22 @@ export function TimeGrid({ days, today, occurrences, daysOff, workStart, workEnd
         </div>
       </div>
     </div>
+  );
+}
+
+/** A day of the all-day row: click to add an all-day event; tasks can be dropped on it. */
+function AllDayCell({ day, onClick }: { day: string; onClick: () => void }) {
+  const isOver = useIsOver(day);
+  return (
+    <div
+      data-all-day={day}
+      data-drop-date={day}
+      aria-hidden
+      onClick={onClick}
+      className={`cursor-pointer border-l border-stone-100 hover:bg-stone-50/80 dark:border-zinc-800 dark:hover:bg-zinc-800/40 ${
+        isOver ? "!bg-[#fff1ec] ring-2 ring-[#ffa36c] ring-inset dark:!bg-[#2d211b]" : ""
+      }`}
+    />
   );
 }
 

@@ -2,8 +2,9 @@
 
 from datetime import date, timedelta
 
-from app.calendar.capacity import DayOff, WorkSchedule, capacity_minutes, is_work_day
-from app.todo.schemas import Day, Task
+from app.calendar.capacity import DayOff, WorkSchedule, capacity_minutes, event_minutes, is_work_day
+from app.calendar.schemas import Occurrence
+from app.todo.schemas import Day, EventChip, Task
 
 #: Always shown after today.
 WEEK_AHEAD = 6
@@ -26,13 +27,23 @@ def inbox_order(task: Task) -> tuple:
     return (task.deadline or date.max, _PRIORITY[task.priority], task.created_at)
 
 
+def _on(events: list[Occurrence], day: date) -> list[Occurrence]:
+    return [o for o in events if o.start_date <= day <= o.end_date]
+
+
 def build_days(
-    tasks: list[Task], today: date, schedule: WorkSchedule, days_off: list[DayOff]
+    tasks: list[Task],
+    today: date,
+    schedule: WorkSchedule,
+    days_off: list[DayOff],
+    events: list[Occurrence] | None = None,
 ) -> tuple[list[Day], list[Task]]:
     """Overdue days (oldest first), today, the next 6 days, then later days up to 2 weeks that have tasks.
 
-    Missed routine occurrences are not shown; past days only show undone tasks.
+    Missed routine occurrences are not shown; past days only show undone tasks. Calendar events show on
+    their days (already sorted: all-day first, then by time) and take away task time.
     """
+    events = events or []
     by_day: dict[date, list[Task]] = {}
     inbox: list[Task] = []
     for task in tasks:
@@ -59,6 +70,8 @@ def build_days(
             is_work_day=is_work_day(day, schedule, days_off),
             capacity_min=capacity_minutes(day, schedule, days_off),
             planned_min=sum(t.duration_min or 0 for t in by_day.get(day, [])),
+            event_min=event_minutes(day, [o.span() for o in _on(events, day)], schedule, days_off),
+            events=[EventChip(**o.model_dump(include=set(EventChip.model_fields))) for o in _on(events, day)],
             tasks=sorted(by_day.get(day, []), key=_day_order),
         )
         for day in shown

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from datetime import date, time
 
+from app.calendar.events import EventSpan, busy_minutes
+
 
 @dataclass(frozen=True)
 class WorkSchedule:
@@ -35,3 +37,9 @@ def capacity_minutes(day: date, schedule: WorkSchedule, days_off: list[DayOff]) 
     if is_work_day(day, schedule, days_off):
         return schedule.task_minutes_workday
     return schedule.task_minutes_day_off
+
+
+def event_minutes(day: date, events: list[EventSpan], schedule: WorkSchedule, days_off: list[DayOff]) -> int:
+    """Task time that events take on `day` (outside work hours on a work day)."""
+    hours = (schedule.work_start, schedule.work_end) if is_work_day(day, schedule, days_off) else None
+    return busy_minutes(events, day, hours)

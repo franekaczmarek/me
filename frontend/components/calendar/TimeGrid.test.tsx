@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Occurrence } from "@/lib/calendar/types";
+import { DragProvider } from "@/components/todo/dnd";
 import { HOUR_PX, TimeGrid } from "./TimeGrid";
 
 const DAYS = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"];
@@ -40,18 +41,40 @@ beforeEach(() => {
 });
 afterEach(() => rectSpy.mockRestore());
 
+const wine = {
+  id: "t1",
+  title: "Buy wine",
+  notes: "",
+  planned_date: "2026-10-13",
+  deadline: null,
+  duration_min: null,
+  priority: "normal" as const,
+  fixed_day: false,
+  status: "open" as const,
+  completed_at: null,
+  first_planned_date: "2026-10-13",
+  postponed_count: 0,
+  routine_id: null,
+  occurrence_date: null,
+  position: 0,
+  created_at: "",
+};
+
 function setup(occurrences = [doctor, trip]) {
-  const props = { onCreate: vi.fn(), onOpen: vi.fn(), onMove: vi.fn(), onShowDay: vi.fn() };
+  const props = { onCreate: vi.fn(), onOpen: vi.fn(), onMove: vi.fn(), onShowDay: vi.fn(), onToggleTask: vi.fn(), onOpenTask: vi.fn() };
   render(
+    <DragProvider onDrop={vi.fn()}>
     <TimeGrid
       days={DAYS}
       today="2026-10-14"
       occurrences={occurrences}
+      tasks={[wine]}
       daysOff={[{ id: "d1", start_date: "2026-10-17", end_date: "2026-10-17", label: "Holiday" }]}
       workStart={540}
       workEnd={1020}
       {...props}
-    />,
+    />
+    </DragProvider>,
   );
   return props;
 }
@@ -130,5 +153,15 @@ describe("TimeGrid", () => {
     fireEvent.pointerMove(window, { clientX: 250, clientY: 900 });
     fireEvent.pointerUp(window, { clientX: 250, clientY: 900 });
     expect(props.onMove).not.toHaveBeenCalled();
+  });
+
+  it("shows tasks in the all-day row", async () => {
+    const props = setup();
+    const row = screen.getByRole("row", { name: "All day" });
+    await userEvent.click(within(row).getByRole("checkbox", { name: "Complete Buy wine" }));
+    expect(props.onToggleTask).toHaveBeenCalledWith(wine);
+    await userEvent.click(within(row).getByRole("button", { name: "Task: Buy wine" }));
+    expect(props.onOpenTask).toHaveBeenCalledWith(wine);
+    expect(row.querySelector('[data-drop-date="2026-10-13"]')).not.toBeNull();
   });
 });

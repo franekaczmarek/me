@@ -10,6 +10,8 @@ export const localToday = () => dayOf(new Date());
 
 export const todoApi = {
   days: () => api<DaysFeed>(`/todo/days?today=${localToday()}`),
+  /** Tasks planned in [start, end] (for the calendar). */
+  tasks: (start: string, end: string) => api<Task[]>(`/todo/tasks?start=${start}&end=${end}`),
   createTask: (input: Partial<TaskInput> & { title: string }) => api<Task>("/todo/tasks", json("POST", input)),
   updateTask: (id: string, input: Partial<TaskInput> & { position?: number }) =>
     api<Task>(`/todo/tasks/${id}`, json("PATCH", input)),

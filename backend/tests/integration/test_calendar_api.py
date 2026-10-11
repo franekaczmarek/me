@@ -92,3 +92,24 @@ def test_api_crud_and_occurrences(api: TestClient) -> None:
 
     assert api.delete(f"/calendar/events/{visit['id']}").status_code == 204
     assert api.get(f"/calendar/events/{visit['id']}").status_code == 404
+
+
+def test_events_reach_the_todo_feed_and_tasks_reach_the_calendar(api: TestClient) -> None:
+    today = "2026-10-12"  # a Monday
+    api.put(
+        "/calendar/work-schedule",
+        json={"work_days": [1, 2, 3, 4, 5], "work_start": "09:00", "work_end": "17:00", "task_minutes_workday": 180, "task_minutes_day_off": 360},
+    )
+    api.post(
+        "/calendar/events",
+        json={"title": "Dinner", "start_date": today, "end_date": today, "start_time": "18:00", "end_time": "20:00"},
+    )
+    feed = api.get("/todo/days", params={"today": today}).json()
+    monday = feed["days"][0]
+    assert [e["title"] for e in monday["events"]] == ["Dinner"]
+    assert monday["event_min"] == 120
+
+    task = api.post("/todo/tasks", json={"title": "Buy wine", "planned_date": today}).json()
+    found = api.get("/todo/tasks", params={"start": "2026-10-12", "end": "2026-10-18"}).json()
+    assert [t["id"] for t in found] == [task["id"]]
+    assert found[0]["source_event_id"] is None

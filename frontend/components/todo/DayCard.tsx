@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { dayTitle, formatMinutes } from "@/lib/todo/format";
 import type { Day, Task } from "@/lib/todo/types";
 import { useIsOver } from "./dnd";
@@ -19,8 +20,12 @@ type Props = {
 /** One day: name + date, how full it is, its tasks and a quick-add line. */
 export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Props) {
   const { name, date } = dayTitle(day.date, today);
-  const over = day.planned_min > day.capacity_min;
-  const fill = day.capacity_min ? Math.min(1, day.planned_min / day.capacity_min) : day.planned_min ? 1 : 0;
+  // Events outside work hours take task time too.
+  const used = day.planned_min + day.event_min;
+  const over = used > day.capacity_min;
+  const share = (minutes: number) => (day.capacity_min ? Math.min(1, minutes / day.capacity_min) : minutes ? 1 : 0);
+  const eventFill = share(day.event_min);
+  const taskFill = Math.min(1 - eventFill, share(day.planned_min));
   const done = day.tasks.filter((t) => t.status === "done").length;
   // Tasks can be dropped on today and later days, not on past ones.
   const isOver = useIsOver(day.date);
@@ -61,25 +66,55 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
                 {done}/{day.tasks.length} done
               </span>
             )}
-            <span className={over ? "font-semibold text-[#e0574a]" : undefined}>
-              {formatMinutes(day.planned_min)} of {formatMinutes(day.capacity_min)}
+            <span
+              className={over ? "font-semibold text-[#e0574a]" : undefined}
+              title={day.event_min ? `Tasks ${formatMinutes(day.planned_min)} + events ${formatMinutes(day.event_min)}` : undefined}
+            >
+              {formatMinutes(used)} of {formatMinutes(day.capacity_min)}
             </span>
             <span
               role="meter"
               aria-label="Planned time"
               aria-valuemin={0}
               aria-valuemax={day.capacity_min}
-              aria-valuenow={day.planned_min}
-              className="h-2 w-20 overflow-hidden rounded-full bg-stone-100 dark:bg-zinc-800"
+              aria-valuenow={used}
+              className="flex h-2 w-20 overflow-hidden rounded-full bg-stone-100 dark:bg-zinc-800"
             >
+              {eventFill > 0 && (
+                <span
+                  data-testid="event-time"
+                  className="block h-full transition-[width] duration-300"
+                  style={{ width: `${eventFill * 100}%`, background: over ? "#ff7a6b" : "#9b87f5" }}
+                />
+              )}
               <span
-                className="block h-full rounded-full transition-[width] duration-300"
-                style={{ width: `${fill * 100}%`, background: over ? "#ff7a6b" : "#4cc9a0" }}
+                className="block h-full rounded-r-full transition-[width] duration-300"
+                style={{ width: `${taskFill * 100}%`, background: over ? "#ff7a6b" : "#4cc9a0" }}
               />
             </span>
           </div>
         )}
       </header>
+
+      {day.events.length > 0 && (
+        <ul aria-label="Events" className="mt-2 flex flex-wrap gap-1.5 px-3">
+          {day.events.map((event) => (
+            <li key={event.id}>
+              <Link
+                href="/calendar"
+                aria-label={event.start_time ? `${event.title}, ${event.start_time.slice(0, 5)}` : event.title}
+                title="Open the calendar"
+                className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-stone-700 transition hover:brightness-95 dark:text-zinc-200"
+                style={{ background: `${event.color}26` }}
+              >
+                <span className="size-1.5 rounded-full" style={{ background: event.color }} />
+                {event.start_time && <span className="text-stone-500 tabular-nums dark:text-zinc-400">{event.start_time.slice(0, 5)}</span>}
+                {event.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {day.tasks.length > 0 && (
         <ul className="mt-2 flex flex-col">

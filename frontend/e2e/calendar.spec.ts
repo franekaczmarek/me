@@ -141,3 +141,44 @@ test("a user drags out an event in the week view and moves it to a later time", 
     for (const e of all.filter((e) => e.title.startsWith("E2E"))) await api.delete(`/calendar/events/${e.id}`);
   }
 });
+
+test("calendar events show in the to-do list, and tasks can be dragged between calendar days", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const today = localDay(0);
+  const tomorrow = localDay(1);
+  const event = await (
+    await api.post("/calendar/events", { title: "E2E dinner", start_date: today, end_date: today, start_time: "19:00", end_time: "21:00" })
+  ).json();
+  const task = await (await api.post("/todo/tasks", { title: "E2E wine", planned_date: today })).json();
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const todayCard = page.getByRole("region", { name: /^Today/ });
+    await expect(todayCard.getByRole("link", { name: "E2E dinner, 19:00" })).toBeVisible();
+
+    await page.getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "Month", exact: true }).click();
+    const grid = page.getByRole("grid", { name: "Month" });
+    const chip = grid.getByRole("button", { name: "Task: E2E wine" });
+    await expect(chip).toBeVisible();
+    const target = grid.getByRole("gridcell", { name: longDay(tomorrow) });
+    const from = (await chip.boundingBox())!;
+    const to = (await target.boundingBox())!;
+    await page.mouse.move(from.x + 10, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height - 12, { steps: 10 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => {
+        const tasks: { id: string; planned_date: string }[] = await (await api.get(`/todo/tasks?start=${today}&end=${tomorrow}`)).json();
+        return tasks.find((t) => t.id === task.id)?.planned_date;
+      })
+      .toBe(tomorrow);
+    await grid.getByRole("checkbox", { name: "Complete E2E wine" }).click();
+    await expect(grid.getByRole("checkbox", { name: "Reopen E2E wine" })).toBeVisible();
+  } finally {
+    await api.delete(`/calendar/events/${event.id}`);
+    await api.delete(`/todo/tasks/${task.id}`);
+  }
+});

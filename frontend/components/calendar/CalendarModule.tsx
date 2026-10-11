@@ -7,8 +7,12 @@ import { toInput } from "@/lib/calendar/events";
 import { formatTime, fullDay, longDay, monthTitle, weekTitle } from "@/lib/calendar/format";
 import { addMonths, minutesOf, monthGrid, onDay, startOfMonth, startOfWeek, timeOf } from "@/lib/calendar/grid";
 import type { CalendarEvent, EventInput, Occurrence, Summary } from "@/lib/calendar/types";
-import { localToday } from "@/lib/todo/api";
+import { localToday, todoApi } from "@/lib/todo/api";
 import { addDays, daysBetween } from "@/lib/todo/format";
+import type { Task, TaskInput } from "@/lib/todo/types";
+import { DragProvider } from "@/components/todo/dnd";
+import { TaskForm } from "@/components/todo/TaskForm";
+import { TaskRow } from "@/components/todo/TaskRow";
 import { type EventDefaults, EventForm } from "./EventForm";
 import { MonthView } from "./MonthView";
 import { SummaryCard, UpcomingCard } from "./SideCards";
@@ -55,10 +59,11 @@ type Panel =
   | { mode: "new"; defaults: EventDefaults }
   | { mode: "edit"; event: CalendarEvent }
   | { mode: "day"; day: string }
+  | { mode: "task"; task: Task }
   | { mode: "settings" }
   | null;
 
-type Data = { occurrences: Occurrence[]; daysOff: DayOff[] };
+type Data = { occurrences: Occurrence[]; tasks: Task[]; daysOff: DayOff[] };
 
 const panelCard =
   "flex flex-col gap-4 rounded-3xl border border-stone-100 bg-white p-5 shadow-[0_8px_30px_rgba(120,100,80,0.08)] dark:border-zinc-800 dark:bg-zinc-900";
@@ -98,13 +103,16 @@ export function CalendarModule() {
   const latest = useRef(0);
   const reload = useCallback(() => {
     const request = ++latest.current;
-    return Promise.all([calendarApi.occurrences(first, last), calendarApi.daysOff(), calendarApi.summary(month, today)]).then(
-      ([occurrences, daysOff, sum]) => {
-        if (request !== latest.current) return;
-        setData({ occurrences, daysOff });
-        setSummary(sum);
-      },
-    );
+    return Promise.all([
+      calendarApi.occurrences(first, last),
+      todoApi.tasks(first, last),
+      calendarApi.daysOff(),
+      calendarApi.summary(month, today),
+    ]).then(([occurrences, tasks, daysOff, sum]) => {
+      if (request !== latest.current) return;
+      setData({ occurrences, tasks, daysOff });
+      setSummary(sum);
+    });
   }, [first, last, month, today]);
 
   useEffect(() => {
@@ -161,6 +169,33 @@ export function CalendarModule() {
     await reload().catch(() => {});
   }
 
+  /** Runs a task change, then reloads (the server decides what is shown). */
+  async function act(action: () => Promise<unknown>) {
+    setActionError(null);
+    try {
+      await action();
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+    await reload().catch(() => {});
+  }
+
+  const toggleTask = (task: Task) =>
+    act(() => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)));
+
+  function moveTask(task: Task, day: string | null) {
+    if (!day) return;
+    setData((d) => d && { ...d, tasks: d.tasks.map((t) => (t.id === task.id ? { ...t, planned_date: day } : t)) });
+    act(() => todoApi.updateTask(task.id, { planned_date: day }));
+  }
+
+  async function saveTask(input: TaskInput) {
+    if (panel?.mode !== "task") return;
+    await todoApi.updateTask(panel.task.id, input);
+    await reload();
+    setPanel(null);
+  }
+
   async function save(input: EventInput) {
     if (panel?.mode === "edit") await calendarApi.saveEvent(panel.event.id, input);
     else await calendarApi.createEvent(input);
@@ -191,136 +226,168 @@ export function CalendarModule() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setCursor(today)} className={secondary}>
-            Today
-          </button>
-          <div className="flex items-center">
-            <button type="button" aria-label={`Previous ${unit}`} onClick={() => setCursor(step(view, cursor, -1))} className={round}>
-              ‹
+    <DragProvider onDrop={moveTask}>
+      <div className="flex flex-1 flex-col gap-4 bg-[#faf7f2] p-4 md:flex-row md:p-6 dark:bg-zinc-950">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setCursor(today)} className={secondary}>
+              Today
             </button>
-            <button type="button" aria-label={`Next ${unit}`} onClick={() => setCursor(step(view, cursor, 1))} className={round}>
-              ›
-            </button>
-          </div>
-          <h1 className="mr-auto text-xl font-semibold text-stone-800 dark:text-zinc-100">{title}</h1>
-          <div role="group" aria-label="View" className="flex rounded-full bg-stone-100 p-1 dark:bg-zinc-800">
-            {VIEWS.map((v) => (
-              <button
-                key={v.value}
-                type="button"
-                aria-pressed={view === v.value}
-                onClick={() => setView(v.value)}
-                className={`rounded-full px-3 py-1 text-sm font-medium transition ${
-                  view === v.value ? "bg-white text-stone-800 shadow-sm dark:bg-zinc-950 dark:text-zinc-100" : "text-stone-500 hover:text-stone-700 dark:text-zinc-400"
-                }`}
-              >
-                {v.label}
+            <div className="flex items-center">
+              <button type="button" aria-label={`Previous ${unit}`} onClick={() => setCursor(step(view, cursor, -1))} className={round}>
+                ‹
               </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setPanel({ mode: "new", defaults: { date: first <= today && today <= last ? today : view === "month" ? month : cursor } })}
-            className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
-          >
-            New event
-          </button>
-          <button type="button" aria-label="Work schedule and days off" title="Work schedule and days off" onClick={() => setPanel({ mode: "settings" })} className={round}>
-            ⚙
-          </button>
-        </div>
-        {actionError && <Message kind="error">{actionError}</Message>}
-        {!data ? null : view === "month" ? (
-          <MonthView
-            month={cursor}
-            today={today}
-            occurrences={data.occurrences}
-            daysOff={data.daysOff}
-            onCreate={(day) => setPanel({ mode: "new", defaults: { date: day } })}
-            onOpen={(o) => openEvent(o.id)}
-            onShowDay={showDay}
-            onListDay={(day) => setPanel({ mode: "day", day })}
-          />
-        ) : (
-          <TimeGrid
-            key={view}
-            days={view === "week" ? Array.from({ length: 7 }, (_, i) => addDays(first, i)) : [cursor]}
-            today={today}
-            occurrences={data.occurrences}
-            daysOff={data.daysOff}
-            workStart={hours.start}
-            workEnd={hours.end}
-            onCreate={(defaults) => setPanel({ mode: "new", defaults })}
-            onOpen={(o) => openEvent(o.id)}
-            onMove={move}
-            onShowDay={view === "week" ? showDay : undefined}
-          />
-        )}
-        {!data && (
-          <p className="p-6 text-sm text-stone-500">Loading your calendar…</p>
-        )}
-      </div>
-
-      <div ref={sideRef} className="flex w-full scroll-mt-4 flex-col gap-4 md:w-96">
-        {panel?.mode === "new" || panel?.mode === "edit" ? (
-          <aside aria-label={panel.mode === "new" ? "New event" : "Edit event"} className={panelCard}>
-            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{panel.mode === "new" ? "New event" : "Edit event"}</p>
-            <EventForm
-              key={panel.mode === "edit" ? panel.event.id : `new-${panel.defaults.date}-${panel.defaults.startTime}-${panel.defaults.endTime}`}
-              event={panel.mode === "edit" ? panel.event : undefined}
-              defaults={panel.mode === "new" ? panel.defaults : undefined}
-              submitLabel={panel.mode === "new" ? "Add event" : "Save changes"}
-              onSave={save}
-              onCancel={() => setPanel(null)}
-              onDelete={
-                panel.mode === "edit"
-                  ? async () => {
-                      await calendarApi.deleteEvent(panel.event.id);
-                      await reload();
-                      setPanel(null);
-                    }
-                  : undefined
-              }
-            />
-          </aside>
-        ) : panel?.mode === "day" ? (
-          <DayPanel
-            day={panel.day}
-            occurrences={onDay(data?.occurrences ?? [], panel.day)}
-            onOpen={(o) => openEvent(o.id)}
-            onAdd={() => setPanel({ mode: "new", defaults: { date: panel.day } })}
-            onClose={() => setPanel(null)}
-          />
-        ) : panel?.mode === "settings" ? (
-          <>
-            <button type="button" onClick={() => setPanel(null)} className={`${secondary} self-start`}>
-              ← Back to summary
+              <button type="button" aria-label={`Next ${unit}`} onClick={() => setCursor(step(view, cursor, 1))} className={round}>
+                ›
+              </button>
+            </div>
+            <h1 className="mr-auto text-xl font-semibold text-stone-800 dark:text-zinc-100">{title}</h1>
+            <div role="group" aria-label="View" className="flex rounded-full bg-stone-100 p-1 dark:bg-zinc-800">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.value}
+                  type="button"
+                  aria-pressed={view === v.value}
+                  onClick={() => setView(v.value)}
+                  className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                    view === v.value ? "bg-white text-stone-800 shadow-sm dark:bg-zinc-950 dark:text-zinc-100" : "text-stone-500 hover:text-stone-700 dark:text-zinc-400"
+                  }`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setPanel({ mode: "new", defaults: { date: first <= today && today <= last ? today : view === "month" ? month : cursor } })}
+              className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
+            >
+              New event
             </button>
-            <WorkSettings onChanged={() => reload().catch(() => {})} />
-          </>
-        ) : (
-          <>
-            <SummaryCard summary={summary?.month ?? null} />
-            <UpcomingCard upcoming={summary?.upcoming ?? null} onOpen={(item) => openEvent(item.id)} />
-          </>
-        )}
+            <button type="button" aria-label="Work schedule and days off" title="Work schedule and days off" onClick={() => setPanel({ mode: "settings" })} className={round}>
+              ⚙
+            </button>
+          </div>
+          {actionError && <Message kind="error">{actionError}</Message>}
+          {!data ? null : view === "month" ? (
+            <MonthView
+              month={cursor}
+              today={today}
+              occurrences={data.occurrences}
+              tasks={data.tasks}
+              daysOff={data.daysOff}
+              onCreate={(day) => setPanel({ mode: "new", defaults: { date: day } })}
+              onOpen={(o) => openEvent(o.id)}
+              onToggleTask={toggleTask}
+              onOpenTask={(task) => setPanel({ mode: "task", task })}
+              onShowDay={showDay}
+              onListDay={(day) => setPanel({ mode: "day", day })}
+            />
+          ) : (
+            <TimeGrid
+              key={view}
+              days={view === "week" ? Array.from({ length: 7 }, (_, i) => addDays(first, i)) : [cursor]}
+              today={today}
+              occurrences={data.occurrences}
+              tasks={data.tasks}
+              daysOff={data.daysOff}
+              onToggleTask={toggleTask}
+              onOpenTask={(task) => setPanel({ mode: "task", task })}
+              workStart={hours.start}
+              workEnd={hours.end}
+              onCreate={(defaults) => setPanel({ mode: "new", defaults })}
+              onOpen={(o) => openEvent(o.id)}
+              onMove={move}
+              onShowDay={view === "week" ? showDay : undefined}
+            />
+          )}
+          {!data && (
+            <p className="p-6 text-sm text-stone-500">Loading your calendar…</p>
+          )}
+        </div>
+
+        <div ref={sideRef} className="flex w-full scroll-mt-4 flex-col gap-4 md:w-96">
+          {panel?.mode === "new" || panel?.mode === "edit" ? (
+            <aside aria-label={panel.mode === "new" ? "New event" : "Edit event"} className={panelCard}>
+              <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{panel.mode === "new" ? "New event" : "Edit event"}</p>
+              <EventForm
+                key={panel.mode === "edit" ? panel.event.id : `new-${panel.defaults.date}-${panel.defaults.startTime}-${panel.defaults.endTime}`}
+                event={panel.mode === "edit" ? panel.event : undefined}
+                defaults={panel.mode === "new" ? panel.defaults : undefined}
+                submitLabel={panel.mode === "new" ? "Add event" : "Save changes"}
+                onSave={save}
+                onCancel={() => setPanel(null)}
+                onDelete={
+                  panel.mode === "edit"
+                    ? async () => {
+                        await calendarApi.deleteEvent(panel.event.id);
+                        await reload();
+                        setPanel(null);
+                      }
+                    : undefined
+                }
+              />
+            </aside>
+          ) : panel?.mode === "task" ? (
+            <aside aria-label="Edit task" className={panelCard}>
+              <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">Edit task</p>
+              <TaskForm
+                key={panel.task.id}
+                task={panel.task}
+                submitLabel="Save changes"
+                onSave={saveTask}
+                onCancel={() => setPanel(null)}
+                onDelete={async () => {
+                  await todoApi.deleteTask(panel.task.id);
+                  await reload();
+                  setPanel(null);
+                }}
+              />
+            </aside>
+          ) : panel?.mode === "day" ? (
+            <DayPanel
+              day={panel.day}
+              today={today}
+              occurrences={onDay(data?.occurrences ?? [], panel.day)}
+              tasks={(data?.tasks ?? []).filter((t) => t.planned_date === panel.day)}
+              onToggleTask={toggleTask}
+              onOpenTask={(task) => setPanel({ mode: "task", task })}
+              onOpen={(o) => openEvent(o.id)}
+              onAdd={() => setPanel({ mode: "new", defaults: { date: panel.day } })}
+              onClose={() => setPanel(null)}
+            />
+          ) : panel?.mode === "settings" ? (
+            <>
+              <button type="button" onClick={() => setPanel(null)} className={`${secondary} self-start`}>
+                ← Back to summary
+              </button>
+              <WorkSettings onChanged={() => reload().catch(() => {})} />
+            </>
+          ) : (
+            <>
+              <SummaryCard summary={summary?.month ?? null} />
+              <UpcomingCard upcoming={summary?.upcoming ?? null} onOpen={(item) => openEvent(item.id)} />
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </DragProvider>
   );
 }
 
 type DayPanelProps = {
   day: string;
+  today: string;
   occurrences: Occurrence[];
+  tasks: Task[];
+  onToggleTask: (task: Task) => void;
+  onOpenTask: (task: Task) => void;
   onOpen: (o: Occurrence) => void;
   onAdd: () => void;
   onClose: () => void;
 };
 
-function DayPanel({ day, occurrences, onOpen, onAdd, onClose }: DayPanelProps) {
+function DayPanel({ day, today, occurrences, tasks, onToggleTask, onOpenTask, onOpen, onAdd, onClose }: DayPanelProps) {
   return (
     <aside aria-label={longDay(day)} className={panelCard}>
       <header className="flex items-baseline justify-between">
@@ -329,7 +396,7 @@ function DayPanel({ day, occurrences, onOpen, onAdd, onClose }: DayPanelProps) {
           ×
         </button>
       </header>
-      {occurrences.length === 0 ? (
+      {occurrences.length === 0 && tasks.length === 0 ? (
         <p className="text-sm text-stone-500">Nothing planned.</p>
       ) : (
         <ul className="flex flex-col">
@@ -346,6 +413,13 @@ function DayPanel({ day, occurrences, onOpen, onAdd, onClose }: DayPanelProps) {
                 </span>
               </button>
             </li>
+          ))}
+        </ul>
+      )}
+      {tasks.length > 0 && (
+        <ul aria-label="Tasks" className="-mx-2 flex flex-col">
+          {tasks.map((task) => (
+            <TaskRow key={task.id} task={task} today={today} onToggle={onToggleTask} onOpen={onOpenTask} />
           ))}
         </ul>
       )}

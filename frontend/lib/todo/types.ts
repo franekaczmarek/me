@@ -22,6 +22,19 @@ export type Task = {
   occurrence_date: string | null;
   position: number;
   created_at: string;
+  /** Created for this calendar event occurrence. */
+  source_event_id?: string | null;
+  source_occurrence_date?: string | null;
+};
+
+/** A calendar event shown on a day of the to-do list. */
+export type EventChip = {
+  id: string;
+  title: string;
+  color: string;
+  start_time: string | null;
+  end_time: string | null;
+  all_day: boolean;
 };
 
 export type Day = {
@@ -32,6 +45,9 @@ export type Day = {
   is_work_day: boolean;
   capacity_min: number;
   planned_min: number;
+  /** Task time taken by calendar events (outside work hours on a work day). */
+  event_min: number;
+  events: EventChip[];
   tasks: Task[];
 };
 

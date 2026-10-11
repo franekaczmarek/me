@@ -68,12 +68,30 @@ def occurrences(event: EventSpan, start: date, end: date) -> list[EventSpan]:
     return found
 
 
-def minutes_on(event: EventSpan, day: date) -> int:
-    """Minutes a timed occurrence takes on `day`; all-day events don't block time."""
+def _overlap(event: EventSpan, start: datetime, end: datetime) -> int:
+    """Minutes a timed event overlaps [start, end); all-day events don't block time."""
     if event.start_time is None or event.end_time is None:
         return 0
     starts = datetime.combine(event.start_date, event.start_time)
     ends = datetime.combine(event.end_date, event.end_time)
-    day_start = datetime.combine(day, time())
-    overlap = min(ends, day_start + timedelta(days=1)) - max(starts, day_start)
+    overlap = min(ends, end) - max(starts, start)
     return max(0, int(overlap.total_seconds() // 60))
+
+
+def minutes_on(event: EventSpan, day: date) -> int:
+    """Minutes a timed occurrence takes on `day`; all-day events don't block time."""
+    day_start = datetime.combine(day, time())
+    return _overlap(event, day_start, day_start + timedelta(days=1))
+
+
+def busy_minutes(events: list[EventSpan], day: date, work_hours: tuple[time, time] | None) -> int:
+    """Minutes events take on `day` outside work hours: the time they take away from tasks.
+
+    On a work day tasks happen around work, so an event during work hours costs no task time.
+    """
+    total = 0
+    for event in events:
+        total += minutes_on(event, day)
+        if work_hours:
+            total -= _overlap(event, datetime.combine(day, work_hours[0]), datetime.combine(day, work_hours[1]))
+    return total

@@ -2,7 +2,7 @@ from datetime import date, time
 
 import pytest
 
-from app.calendar.events import EventSpan, add_months, minutes_on, occurrences
+from app.calendar.events import EventSpan, add_months, busy_minutes, minutes_on, occurrences
 
 
 def starts(event: EventSpan, start: date, end: date) -> list[date]:
@@ -95,3 +95,14 @@ def test_minutes_on() -> None:
     assert minutes_on(overnight, date(2026, 10, 13)) == 120
 
     assert minutes_on(EventSpan(date(2026, 10, 12), date(2026, 10, 12)), date(2026, 10, 12)) == 0
+
+
+def test_busy_minutes_count_only_time_outside_work() -> None:
+    work = (time(9), time(17))
+    visit = EventSpan(date(2026, 10, 12), date(2026, 10, 12), time(16), time(18))
+    dinner = EventSpan(date(2026, 10, 12), date(2026, 10, 12), time(19), time(21))
+    birthday = EventSpan(date(2026, 10, 12), date(2026, 10, 12))
+    day = date(2026, 10, 12)
+    assert busy_minutes([visit, dinner, birthday], day, work) == 60 + 120
+    assert busy_minutes([visit, dinner, birthday], day, None) == 120 + 120
+    assert busy_minutes([], day, work) == 0

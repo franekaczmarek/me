@@ -1,6 +1,6 @@
 """Request/response models for the to-do API."""
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
@@ -14,7 +14,8 @@ Duration = Annotated[int, Field(ge=1, le=1440, description="Estimated minutes")]
 
 TASK_COLUMNS = (
     "id,title,notes,planned_date,deadline,duration_min,priority,fixed_day,status,completed_at,"
-    "first_planned_date,postponed_count,routine_id,occurrence_date,position,created_at"
+    "first_planned_date,postponed_count,routine_id,occurrence_date,position,created_at,"
+    "source_event_id,source_occurrence_date"
 )
 
 
@@ -71,6 +72,20 @@ class Task(BaseModel):
     occurrence_date: date | None
     position: int
     created_at: datetime
+    #: Created for this calendar event occurrence ("Buy a present" before a birthday).
+    source_event_id: UUID | None = None
+    source_occurrence_date: date | None = None
+
+
+class EventChip(BaseModel):
+    """A calendar event on a day of the to-do list."""
+
+    id: UUID
+    title: str
+    color: str
+    start_time: time | None
+    end_time: time | None
+    all_day: bool
 
 
 class Day(BaseModel):
@@ -81,6 +96,9 @@ class Day(BaseModel):
     is_work_day: bool
     capacity_min: int
     planned_min: int
+    #: Task time taken by calendar events (outside work hours on a work day).
+    event_min: int = 0
+    events: list[EventChip] = []
     tasks: list[Task]
 
 

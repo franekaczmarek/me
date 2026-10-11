@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
-from app.calendar.router import load_days_off, load_schedule
+from app.calendar.router import MAX_RANGE_DAYS, load_days_off, load_occurrences, load_schedule
 from app.core.supabase import Supabase, SupabaseDep, one_or_404
 from app.todo.days import build_days, window_end
 from app.todo.recurrence import Rule, occurrences
@@ -94,8 +94,27 @@ def read_days(db: SupabaseDep, today: TodayParam = None) -> DaysFeed:
     tasks = [Task(**r) for r in rows]
     # Overdue days are shown too, so days off are needed from the oldest of them.
     first = min([t.planned_date for t in tasks if t.planned_date] + [day])
-    days, inbox = build_days(tasks, day, load_schedule(db).to_capacity(), load_days_off(db, first, end))
+    days, inbox = build_days(
+        tasks, day, load_schedule(db).to_capacity(), load_days_off(db, first, end), load_occurrences(db, day, end)
+    )
     return DaysFeed(today=day, days=days, inbox=inbox)
+
+
+@router.get("/tasks", response_model=list[Task])
+def list_tasks(start: date, end: date, db: SupabaseDep) -> Any:
+    """Tasks planned in [start, end] (open and done; missed routine occurrences are left out)."""
+    if end < start or (end - start).days > MAX_RANGE_DAYS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Give a range of 0–{MAX_RANGE_DAYS} days")
+    return db.rest(
+        "GET",
+        TASKS,
+        params={
+            "select": TASK_COLUMNS,
+            "status": "neq.missed",
+            "and": f"(planned_date.gte.{start},planned_date.lte.{end})",
+            "order": "planned_date.asc,position.asc,created_at.asc",
+        },
+    )
 
 
 @router.post("/tasks", response_model=Task, status_code=status.HTTP_201_CREATED)

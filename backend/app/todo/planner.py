@@ -13,8 +13,9 @@ import anthropic
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.calendar.capacity import DayOff, WorkSchedule, capacity_minutes, is_work_day
-from app.calendar.router import load_days_off, load_schedule
+from app.calendar.capacity import DayOff, WorkSchedule, capacity_minutes, event_minutes, is_work_day
+from app.calendar.router import load_days_off, load_occurrences, load_schedule
+from app.calendar.schemas import Occurrence
 from app.core.claude import ClaudeDep, ask_structured
 from app.core.supabase import Supabase, SupabaseDep
 from app.todo.schemas import TASK_COLUMNS, Task
@@ -28,7 +29,8 @@ TASKS = "todo_tasks"
 SYSTEM_PROMPT = """You plan the coming days of one person's to-do list.
 
 You get the days (date, weekday, whether it is a work day, minutes available for tasks, minutes already
-booked by tasks that can't move) and the movable tasks (inbox tasks without a day, overdue tasks, and tasks
+booked by tasks that can't move, and the calendar events of the day; the time events take is already
+subtracted from the available minutes) and the movable tasks (inbox tasks without a day, overdue tasks, and tasks
 already planned in the period). For every movable task, choose a day from the given days, or null to leave
 it in the inbox.
 
@@ -39,6 +41,7 @@ Plan the way a thoughtful assistant would:
   the days are full.
 - Spread the load: don't pack one day while the next is empty, and keep lighter loads on work days.
 - Keep a task on its current day unless moving it clearly helps.
+- Use the events: e.g. prepare for an event on an earlier day, keep busy event days light.
 - List the tasks of each day in the order they should be done.
 
 Give each task a short reason (at most 15 words). The summary is one or two friendly sentences about the plan.
@@ -139,10 +142,21 @@ def is_movable(task: Task, last: date) -> bool:
     return task.planned_date is None or task.planned_date <= last
 
 
+def _describe(o: Occurrence) -> str:
+    when = "all day" if o.start_time is None else f"{o.start_time:%H:%M}–{o.end_time:%H:%M}"
+    return f"{o.title} ({when})"
+
+
 def build_context(
-    tasks: list[Task], today: date, days: int, schedule: WorkSchedule, days_off: list[DayOff]
+    tasks: list[Task],
+    today: date,
+    days: int,
+    schedule: WorkSchedule,
+    days_off: list[DayOff],
+    events: list[Occurrence] | None = None,
 ) -> dict[str, Any]:
     dates = window(today, days)
+    on_day = {d: [o for o in events or [] if o.start_date <= d <= o.end_date] for d in dates}
     movable = [t for t in tasks if is_movable(t, dates[-1])]
     movable_ids = {t.id for t in movable}
     booked = {d: 0 for d in dates}
@@ -156,8 +170,13 @@ def build_context(
                 "date": d.isoformat(),
                 "weekday": d.strftime("%A"),
                 "work_day": is_work_day(d, schedule, days_off),
-                "available_min": capacity_minutes(d, schedule, days_off),
+                "available_min": max(
+                    0,
+                    capacity_minutes(d, schedule, days_off)
+                    - event_minutes(d, [o.span() for o in on_day[d]], schedule, days_off),
+                ),
                 "booked_min": booked[d],
+                "events": [_describe(o) for o in on_day[d]],
             }
             for d in dates
         ],
@@ -278,7 +297,14 @@ def propose_plan(body: PlanRequest, db: SupabaseDep, claude: ClaudeDep) -> Propo
     today = body.today or date.today()
     last = today + timedelta(body.days - 1)
     tasks = _load_tasks(db, last)
-    context = build_context(tasks, today, body.days, load_schedule(db).to_capacity(), load_days_off(db, today, last))
+    context = build_context(
+        tasks,
+        today,
+        body.days,
+        load_schedule(db).to_capacity(),
+        load_days_off(db, today, last),
+        load_occurrences(db, today, last),
+    )
     if not context["tasks"]:
         return Proposal(summary="Nothing to plan: there are no movable tasks.", changes=[], warnings=[], days=[])
     return check_proposal(ask_claude(claude, context), context, tasks)

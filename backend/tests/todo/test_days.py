@@ -113,3 +113,21 @@ def test_tasks_in_a_day_follow_position_then_priority() -> None:
         ]
     )
     assert [t.title for t in days[0].tasks] == ["First, high", "First, low", "Second"]
+
+
+def test_events_show_on_their_days_and_take_task_time() -> None:
+    from datetime import time
+
+    from app.calendar.schemas import Event, to_occurrence
+
+    dinner = Event(
+        id=uuid4(), title="Dinner", start_date=TODAY, end_date=TODAY, start_time=time(18), end_time=time(20)
+    )
+    trip = Event(id=uuid4(), title="Trip", start_date=TODAY + timedelta(1), end_date=TODAY + timedelta(2))
+    events = [to_occurrence(e, e.span()) for e in (dinner, trip)]
+    days, _ = build_days([], TODAY, DEFAULT_SCHEDULE, [], events)
+    assert [(c.title, c.all_day) for c in days[0].events] == [("Dinner", False)]
+    assert days[0].event_min == 120
+    assert [c.title for c in days[1].events] == ["Trip"] and [c.title for c in days[2].events] == ["Trip"]
+    assert days[1].event_min == 0
+    assert days[3].events == []

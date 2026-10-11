@@ -2,9 +2,12 @@
 
 import type { DayOff } from "@/lib/calendar/api";
 import { formatTime, longDay } from "@/lib/calendar/format";
-import { hiddenPerDay, monthGrid, type Segment, weekSegments } from "@/lib/calendar/grid";
+import { type CalendarItem, hiddenPerDay, isTask, monthGrid, type Segment, type TaskItem, taskItems, weekSegments } from "@/lib/calendar/grid";
 import type { Occurrence } from "@/lib/calendar/types";
 import { darken, lighten, withAlpha } from "@/lib/colors";
+import type { Task } from "@/lib/todo/types";
+import { useIsOver } from "@/components/todo/dnd";
+import { TaskChip } from "./TaskChip";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 /** Event lanes shown per week before "+N more". */
@@ -15,17 +18,21 @@ type Props = {
   month: string;
   today: string;
   occurrences: Occurrence[];
+  tasks: Task[];
   daysOff: DayOff[];
   onCreate: (day: string) => void;
   onOpen: (occurrence: Occurrence) => void;
+  onToggleTask: (task: Task) => void;
+  onOpenTask: (task: Task) => void;
   /** Opens the day (its number was clicked). */
   onShowDay: (day: string) => void;
   /** Lists everything on a day ("+N more"). */
   onListDay: (day: string) => void;
 };
 
-export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen, onShowDay, onListDay }: Props) {
+export function MonthView({ month, today, occurrences, tasks, daysOff, onCreate, onOpen, onToggleTask, onOpenTask, onShowDay, onListDay }: Props) {
   const weeks = monthGrid(month);
+  const items: CalendarItem[] = [...occurrences, ...taskItems(tasks)];
   const inMonth = month.slice(0, 7);
   const dayOff = (day: string) => daysOff.find((d) => d.start_date <= day && d.end_date >= day);
 
@@ -39,7 +46,7 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
         ))}
       </div>
       {weeks.map((week) => {
-        const segments = weekSegments(week, occurrences);
+        const segments = weekSegments(week, items);
         const hidden = hiddenPerDay(segments, LANES);
         return (
           <div role="row" key={week[0]} className="relative min-h-[6.25rem] flex-1 border-b border-stone-100 last:border-b-0 dark:border-zinc-800">
@@ -48,15 +55,11 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
                 const off = dayOff(day);
                 const outside = day.slice(0, 7) !== inMonth;
                 return (
-                  <div
-                    role="gridcell"
+                  <DayCell
                     key={day}
-                    aria-label={longDay(day)}
-                    data-day={day}
+                    day={day}
                     onClick={() => onCreate(day)}
-                    className={`flex cursor-pointer items-start gap-1 border-r border-stone-100 p-1.5 last:border-r-0 hover:bg-stone-50/80 dark:border-zinc-800 dark:hover:bg-zinc-800/40 ${
-                      off ? "bg-[#f2c14e]/10" : outside ? "bg-stone-50/50 dark:bg-zinc-950/30" : ""
-                    }`}
+                    className={off ? "bg-[#f2c14e]/10" : outside ? "bg-stone-50/50 dark:bg-zinc-950/30" : ""}
                   >
                     <button
                       type="button"
@@ -80,7 +83,7 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
                         🌴 {off.label || "Day off"}
                       </span>
                     )}
-                  </div>
+                  </DayCell>
                 );
               })}
             </div>
@@ -89,7 +92,7 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
               {segments
                 .filter((s) => s.lane < LANES)
                 .map((s) => (
-                  <EventBar key={`${s.occurrence.id}-${s.occurrence.occurrence_date}`} segment={s} onOpen={onOpen} />
+                  <Item key={`${s.occurrence.id}-${s.occurrence.occurrence_date}`} segment={s} rowOffset={2} onOpen={onOpen} onToggleTask={onToggleTask} onOpenTask={onOpenTask} />
                 ))}
               {hidden.map((count, col) =>
                 count ? (
@@ -110,6 +113,42 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
       })}
     </div>
   );
+}
+
+/** A day of the grid: click to add an event; tasks can be dropped on it. */
+function DayCell({ day, className, onClick, children }: { day: string; className: string; onClick: () => void; children: React.ReactNode }) {
+  const isOver = useIsOver(day);
+  return (
+    <div
+      role="gridcell"
+      aria-label={longDay(day)}
+      data-day={day}
+      data-drop-date={day}
+      onClick={onClick}
+      className={`flex cursor-pointer items-start gap-1 border-r border-stone-100 p-1.5 last:border-r-0 hover:bg-stone-50/80 dark:border-zinc-800 dark:hover:bg-zinc-800/40 ${className} ${
+        isOver ? "!bg-[#fff1ec] ring-2 ring-[#ffa36c] ring-inset dark:!bg-[#2d211b]" : ""
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+type ItemProps = {
+  segment: Segment<CalendarItem>;
+  rowOffset: number;
+  onOpen: (o: Occurrence) => void;
+  onToggleTask: (task: Task) => void;
+  onOpenTask: (task: Task) => void;
+};
+
+/** An event bar or a task chip. */
+export function Item({ segment, rowOffset, onOpen, onToggleTask, onOpenTask }: ItemProps) {
+  const item = segment.occurrence;
+  if (isTask(item)) {
+    return <TaskChip segment={segment as Segment<TaskItem>} rowOffset={rowOffset} onToggle={onToggleTask} onOpen={onOpenTask} />;
+  }
+  return <EventBar segment={segment as Segment<Occurrence>} rowOffset={rowOffset} onOpen={onOpen} />;
 }
 
 /** An event in a row of days: a tinted bar (all-day / several days) or a dot with the time. Rows below `rowOffset` hold other content. */

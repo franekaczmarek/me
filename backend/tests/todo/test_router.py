@@ -207,3 +207,18 @@ def test_deleting_a_routine_occurrence_skips_it(api: TestClient, fake_db: FakeSu
 
 def test_delete_missing_task_is_404(api: TestClient, fake_db: FakeSupabase) -> None:
     assert api.delete(f"/todo/tasks/{TASK_ID}").status_code == 404
+
+
+def test_tasks_in_a_range(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [])
+    response = api.get("/todo/tasks", params={"start": "2026-10-01", "end": "2026-10-31"})
+    assert response.status_code == 200
+    params = fake_db.last.url.params
+    assert params["and"] == "(planned_date.gte.2026-10-01,planned_date.lte.2026-10-31)"
+    assert params["status"] == "neq.missed"
+    assert "source_event_id" in params["select"]
+
+
+@pytest.mark.parametrize("params", [{"start": "2026-10-31", "end": "2026-10-01"}, {"start": "2026-01-01", "end": "2027-06-01"}])
+def test_tasks_in_a_range_rejects_bad_ranges(api: TestClient, fake_db: FakeSupabase, params: dict) -> None:
+    assert api.get("/todo/tasks", params=params).status_code == 422
