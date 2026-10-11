@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addMonths, hiddenPerDay, isoWeekday, monthGrid, onDay, startOfWeek, weekSegments } from "./grid";
+import { addMonths, hiddenPerDay, isoWeekday, layoutDay, minutesOf, monthGrid, onDay, snap, startOfWeek, timeOf, weekSegments } from "./grid";
 import type { Occurrence } from "./types";
 
 function occ(title: string, start: string, end = start, time: string | null = null): Occurrence {
@@ -74,5 +74,48 @@ describe("calendar grid", () => {
       "2026-10-07",
     );
     expect(list.map((o) => o.title)).toEqual(["Trip", "Early", "Late"]);
+  });
+});
+
+describe("time grid", () => {
+  it("converts times", () => {
+    expect(minutesOf("15:30:00")).toBe(930);
+    expect(timeOf(930)).toBe("15:30");
+    expect(timeOf(1440)).toBe("23:59");
+    expect(timeOf(-5)).toBe("00:00");
+    expect(snap(37)).toBe(30);
+    expect(snap(38)).toBe(45);
+  });
+
+  it("puts overlapping events side by side", () => {
+    const placed = layoutDay([
+      occ("A", "2026-10-14", "2026-10-14", "09:00:00"),
+      { ...occ("B", "2026-10-14", "2026-10-14", "09:30:00"), end_time: "10:30:00" },
+      { ...occ("C", "2026-10-14", "2026-10-14", "10:00:00"), end_time: "11:00:00" },
+      { ...occ("D", "2026-10-14", "2026-10-14", "12:00:00"), end_time: "12:05:00" },
+      occ("All day", "2026-10-14"),
+      { ...occ("Overnight", "2026-10-14", "2026-10-15", "22:00:00"), end_time: "01:00:00" },
+    ]);
+    const byTitle = Object.fromEntries(placed.map((p) => [p.occurrence.title, p]));
+    expect(Object.keys(byTitle)).toEqual(["A", "B", "C", "D"]);
+    expect(byTitle.A).toMatchObject({ col: 0, cols: 3 });
+    expect(byTitle.B).toMatchObject({ col: 1, cols: 3 });
+    expect(byTitle.C).toMatchObject({ col: 2, cols: 3 });
+    expect(byTitle.D).toMatchObject({ start: 720, end: 740 });
+  });
+
+  it("reuses a column once it is free", () => {
+    const placed = layoutDay([
+      { ...occ("Long", "2026-10-14", "2026-10-14", "09:00:00"), end_time: "12:00:00" },
+      { ...occ("First", "2026-10-14", "2026-10-14", "09:00:00"), end_time: "10:00:00" },
+      { ...occ("Second", "2026-10-14", "2026-10-14", "10:00:00"), end_time: "11:00:00" },
+      { ...occ("Later", "2026-10-14", "2026-10-14", "13:00:00"), end_time: "14:00:00" },
+    ]);
+    expect(placed.map((p) => [p.occurrence.title, p.col, p.cols])).toEqual([
+      ["Long", 0, 2],
+      ["First", 1, 2],
+      ["Second", 1, 2],
+      ["Later", 0, 1],
+    ]);
   });
 });

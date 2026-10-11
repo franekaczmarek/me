@@ -87,3 +87,74 @@ export function onDay(occurrences: Occurrence[], day: string): Occurrence[] {
         a.title.localeCompare(b.title),
     );
 }
+
+// --- week / day time grid ------------------------------------------------------------
+
+export const MINUTES_PER_DAY = 1440;
+/** Drag and create snap to quarters of an hour. */
+export const SNAP = 15;
+/** Short events are drawn (and laid out) at least this long. */
+export const MIN_VISIBLE = 20;
+
+/** "15:30:00" → 930 */
+export function minutesOf(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** 930 → "15:30"; the end of the day is "23:59" (a time can't be 24:00). */
+export function timeOf(minutes: number): string {
+  const m = Math.max(0, Math.min(MINUTES_PER_DAY - 1, Math.round(minutes)));
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+export const snap = (minutes: number, step = SNAP) => Math.round(minutes / step) * step;
+
+/** Shown in the time grid: timed events within one day. Everything else goes to the all-day row. */
+export const isTimedSingleDay = (o: Occurrence) => !o.all_day && o.start_date === o.end_date;
+
+export type Placed = {
+  occurrence: Occurrence;
+  /** Minutes from midnight. */
+  start: number;
+  end: number;
+  /** Column within its group of overlapping events, and how many columns the group has. */
+  col: number;
+  cols: number;
+};
+
+/** Side-by-side columns for overlapping timed events of one day (like Google Calendar). */
+export function layoutDay(occurrences: Occurrence[]): Placed[] {
+  const items = occurrences
+    .filter(isTimedSingleDay)
+    .map((o) => {
+      const start = minutesOf(o.start_time!);
+      return { o, start, end: Math.max(minutesOf(o.end_time!), start + MIN_VISIBLE) };
+    })
+    .sort((a, b) => a.start - b.start || b.end - a.end || a.o.title.localeCompare(b.o.title));
+
+  const placed: Placed[] = [];
+  let group: Placed[] = [];
+  let groupEnd = -1;
+  let colEnds: number[] = [];
+  const close = () => {
+    for (const p of group) p.cols = colEnds.length;
+    group = [];
+    colEnds = [];
+  };
+  for (const { o, start, end } of items) {
+    if (start >= groupEnd) {
+      close();
+      groupEnd = -1;
+    }
+    let col = colEnds.findIndex((e) => e <= start);
+    if (col === -1) col = colEnds.length;
+    colEnds[col] = end;
+    const p = { occurrence: o, start, end, col, cols: 0 };
+    group.push(p);
+    placed.push(p);
+    groupEnd = Math.max(groupEnd, end);
+  }
+  close();
+  return placed;
+}

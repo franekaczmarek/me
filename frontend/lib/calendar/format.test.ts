@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countdown, formatTime, longDay, monthTitle, when } from "./format";
+import { countdown, formatTime, fullDay, longDay, monthTitle, weekTitle, when } from "./format";
 
 describe("calendar format", () => {
   it("formats months, days and times", () => {
@@ -18,5 +18,14 @@ describe("calendar format", () => {
     expect(when({ start_date: "2026-10-25", end_date: "2026-10-25", start_time: null })).toBe("Sun 25 Oct");
     expect(when({ start_date: "2026-10-25", end_date: "2026-10-25", start_time: "15:30:00" })).toBe("Sun 25 Oct · 15:30");
     expect(when({ start_date: "2026-10-09", end_date: "2026-10-12", start_time: null })).toBe("Fri 9 Oct – Mon 12 Oct");
+  });
+});
+
+describe("range titles", () => {
+  it("names weeks and days", () => {
+    expect(weekTitle("2026-10-12", "2026-10-18")).toBe("12 – 18 Oct 2026");
+    expect(weekTitle("2026-09-28", "2026-10-04")).toBe("28 Sept – 4 Oct 2026");
+    expect(weekTitle("2026-12-28", "2027-01-03")).toBe("28 Dec 2026 – 3 Jan 2027");
+    expect(fullDay("2026-10-14")).toBe("Wednesday, 14 October 2026");
   });
 });

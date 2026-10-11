@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEvent, Occurrence, Summary } from "@/lib/calendar/types";
@@ -50,6 +50,7 @@ const summary: Summary = {
 };
 
 beforeEach(() => {
+  localStorage.clear();
   calendarApi.occurrences.mockResolvedValue([occurrence(doctor, "2026-10-14"), occurrence(birthday, "2026-10-25")]);
   calendarApi.daysOff.mockResolvedValue([{ id: "d1", start_date: "2026-10-30", end_date: "2026-10-30", label: "Holiday" }]);
   calendarApi.summary.mockResolvedValue(summary);
@@ -162,5 +163,80 @@ describe("CalendarModule", () => {
     expect(await screen.findByText("Could not load your calendar: down")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
+  });
+
+  it("switches to week and day views and remembers the choice", async () => {
+    const { unmount } = render(<CalendarModule />);
+    await findGrid();
+    await userEvent.click(screen.getByRole("button", { name: "Week" }));
+    expect(await screen.findByRole("grid", { name: "Week" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "5 – 11 Oct 2026" })).toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenLastCalledWith("2026-10-05", "2026-10-11");
+    await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    expect(screen.getByRole("heading", { name: "12 – 18 Oct 2026" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Doctor, 15:30 – 16:30" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show Wednesday 14 October" }));
+    expect(await screen.findByRole("grid", { name: "Day" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Wednesday, 14 October 2026" })).toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenLastCalledWith("2026-10-14", "2026-10-14");
+    await userEvent.click(screen.getByRole("button", { name: "Previous day" }));
+    expect(screen.getByRole("heading", { name: "Tuesday, 13 October 2026" })).toBeInTheDocument();
+
+    unmount();
+    render(<CalendarModule />);
+    expect(await screen.findByRole("grid", { name: "Day" })).toBeInTheDocument();
+  });
+
+  it("opens a day from the month grid", async () => {
+    render(<CalendarModule />);
+    await userEvent.click(await within(await findGrid()).findByRole("button", { name: "Show Sunday 25 October" }));
+    expect(await screen.findByRole("grid", { name: "Day" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sunday, 25 October 2026" })).toBeInTheDocument();
+  });
+
+  it("saves a dragged event, moving its whole series", async () => {
+    const series: CalendarEvent = { ...doctor, start_date: "2026-09-30", end_date: "2026-09-30", recurrence: "weekly" };
+    calendarApi.event.mockResolvedValue(series);
+    localStorage.setItem("me.calendar.view", "day");
+    render(<CalendarModule />);
+    await userEvent.click(screen.getByRole("button", { name: "Next day" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next day" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next day" }));
+    const event = await screen.findByRole("button", { name: "Doctor, 15:30 – 16:30" });
+    const px = 48 / 60;
+    fireEvent.pointerDown(event, { button: 0, clientX: 10, clientY: 940 * px, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 1000 * px, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 1000 * px, pointerId: 1 });
+    // Shown at the new time straight away.
+    expect(await screen.findByRole("button", { name: "Doctor, 16:30 – 17:30" })).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(calendarApi.saveEvent).toHaveBeenCalledWith("e2", {
+        title: "Doctor",
+        notes: "",
+        location: "",
+        start_date: "2026-09-30",
+        end_date: "2026-09-30",
+        start_time: "16:30",
+        end_time: "17:30",
+        color: "#56a8f5",
+        recurrence: "weekly",
+        recurrence_until: null,
+        add_to_timeline: false,
+      }),
+    );
+  });
+
+  it("ignores a slower, older load", async () => {
+    let resolveOld: (value: Occurrence[]) => void = () => {};
+    calendarApi.occurrences
+      .mockImplementationOnce(() => new Promise((r) => (resolveOld = r)))
+      .mockResolvedValueOnce([occurrence(doctor, "2026-11-04")]);
+    render(<CalendarModule />);
+    await userEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(await within(await findGrid()).findByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
+    resolveOld([occurrence(birthday, "2026-10-25")]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(grid()).getByRole("button", { name: "Doctor, 15:30" })).toBeInTheDocument();
   });
 });

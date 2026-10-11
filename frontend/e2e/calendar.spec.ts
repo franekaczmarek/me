@@ -96,3 +96,48 @@ test("a user adds an event in the month grid, sees it coming up, edits and delet
     for (const e of all.filter((e) => e.title.startsWith("E2E"))) await api.delete(`/calendar/events/${e.id}`);
   }
 });
+
+test("a user drags out an event in the week view and moves it to a later time", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const day = localDay(0);
+  try {
+    await page.getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "Week", exact: true }).click();
+    const hours = page.getByLabel(`Hours of ${longDay(day)}`);
+    const box = (await hours.boundingBox())!;
+    const y = (minutes: number) => box.y + (minutes * 48) / 60;
+    await page.mouse.move(box.x + box.width / 2, y(10 * 60 + 5));
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, y(11 * 60), { steps: 5 });
+    await page.mouse.move(box.x + box.width / 2, y(11 * 60 + 25), { steps: 5 });
+    await page.mouse.up();
+
+    const form = page.getByRole("complementary", { name: "New event" });
+    await expect(form.getByLabel("Start time")).toHaveValue("10:00");
+    await expect(form.getByLabel("End time")).toHaveValue("11:30");
+    await form.getByLabel("Title").fill("E2E focus");
+    await form.getByRole("button", { name: "Add event" }).click();
+
+    const event = page.getByRole("button", { name: "E2E focus, 10:00 – 11:30" });
+    await expect(event).toBeVisible();
+    const e = (await event.boundingBox())!;
+    await page.mouse.move(e.x + e.width / 2, e.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(e.x + e.width / 2, e.y + 10 + 48, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.getByRole("button", { name: "E2E focus, 11:00 – 12:30" })).toBeVisible();
+
+    // Shown at once; saved in the background.
+    await expect
+      .poll(async () => {
+        const saved: { title: string; start_time: string; end_time: string }[] = await (await api.get(`/calendar/events?start=${day}&end=${day}`)).json();
+        const focus = saved.find((o) => o.title === "E2E focus");
+        return focus && `${focus.start_time}–${focus.end_time}`;
+      })
+      .toBe("11:00:00–12:30:00");
+  } finally {
+    const all: { id: string; title: string }[] = await (await api.get(`/calendar/events?start=${localDay(-1)}&end=${localDay(10)}`)).json();
+    for (const e of all.filter((e) => e.title.startsWith("E2E"))) await api.delete(`/calendar/events/${e.id}`);
+  }
+});

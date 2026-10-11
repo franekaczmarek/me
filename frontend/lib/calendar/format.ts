@@ -29,3 +29,19 @@ export function when(o: { start_date: string; end_date: string; start_time: stri
   const range = o.start_date === o.end_date ? shortDay(o.start_date) : `${shortDay(o.start_date)} – ${shortDay(o.end_date)}`;
   return o.start_time ? `${range} · ${formatTime(o.start_time)}` : range;
 }
+
+const DAY_MONTH = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const DAY_ONLY = new Intl.DateTimeFormat("en-GB", { day: "numeric" });
+const FULL_DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+/** "12 – 18 Oct 2026", "28 Sep – 4 Oct 2026", "28 Dec 2026 – 3 Jan 2027" */
+export function weekTitle(first: string, last: string): string {
+  const a = parseDay(first);
+  const b = parseDay(last);
+  if (a.getFullYear() !== b.getFullYear()) return `${DAY_MONTH.format(a)} ${a.getFullYear()} – ${DAY_MONTH.format(b)} ${b.getFullYear()}`;
+  const start = a.getMonth() === b.getMonth() ? DAY_ONLY.format(a) : DAY_MONTH.format(a);
+  return `${start} – ${DAY_MONTH.format(b)} ${b.getFullYear()}`;
+}
+
+/** "Wednesday, 14 October 2026" */
+export const fullDay = (day: string) => FULL_DAY.format(parseDay(day));

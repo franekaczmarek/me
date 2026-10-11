@@ -18,10 +18,13 @@ type Props = {
   daysOff: DayOff[];
   onCreate: (day: string) => void;
   onOpen: (occurrence: Occurrence) => void;
+  /** Opens the day (its number was clicked). */
   onShowDay: (day: string) => void;
+  /** Lists everything on a day ("+N more"). */
+  onListDay: (day: string) => void;
 };
 
-export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen, onShowDay }: Props) {
+export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen, onShowDay, onListDay }: Props) {
   const weeks = monthGrid(month);
   const inMonth = month.slice(0, 7);
   const dayOff = (day: string) => daysOff.find((d) => d.start_date <= day && d.end_date >= day);
@@ -93,7 +96,7 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
                   <button
                     key={week[col]}
                     type="button"
-                    onClick={() => onShowDay(week[col])}
+                    onClick={() => onListDay(week[col])}
                     style={{ gridColumn: col + 1, gridRow: LANES + 2 }}
                     className="pointer-events-auto mx-1 truncate rounded-full px-2 text-left text-[11px] font-medium text-stone-500 hover:bg-stone-100 dark:hover:bg-zinc-800"
                   >
@@ -109,10 +112,11 @@ export function MonthView({ month, today, occurrences, daysOff, onCreate, onOpen
   );
 }
 
-function EventBar({ segment, onOpen }: { segment: Segment; onOpen: (o: Occurrence) => void }) {
+/** An event in a row of days: a tinted bar (all-day / several days) or a dot with the time. Rows below `rowOffset` hold other content. */
+export function EventBar({ segment, onOpen, rowOffset = 2 }: { segment: Segment; onOpen: (o: Occurrence) => void; rowOffset?: number }) {
   const { occurrence: o, startCol, endCol, lane, continuesBefore, continuesAfter } = segment;
   const bar = o.all_day || o.start_date !== o.end_date;
-  const place = { gridColumn: `${startCol + 1} / ${endCol + 2}`, gridRow: lane + 2 };
+  const place = { gridColumn: `${startCol + 1} / ${endCol + 2}`, gridRow: lane + rowOffset };
   const label = `${o.title}${o.start_time ? `, ${formatTime(o.start_time)}` : ""}`;
 
   if (!bar) {

@@ -3,14 +3,53 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { calendarApi, type DayOff } from "@/lib/calendar/api";
-import { formatTime, longDay, monthTitle } from "@/lib/calendar/format";
-import { addMonths, monthGrid, onDay, startOfMonth } from "@/lib/calendar/grid";
+import { toInput } from "@/lib/calendar/events";
+import { formatTime, fullDay, longDay, monthTitle, weekTitle } from "@/lib/calendar/format";
+import { addMonths, minutesOf, monthGrid, onDay, startOfMonth, startOfWeek, timeOf } from "@/lib/calendar/grid";
 import type { CalendarEvent, EventInput, Occurrence, Summary } from "@/lib/calendar/types";
 import { localToday } from "@/lib/todo/api";
+import { addDays, daysBetween } from "@/lib/todo/format";
 import { type EventDefaults, EventForm } from "./EventForm";
 import { MonthView } from "./MonthView";
 import { SummaryCard, UpcomingCard } from "./SideCards";
+import { type TimeChange, TimeGrid } from "./TimeGrid";
 import { WorkSettings } from "./WorkSettings";
+
+type View = "month" | "week" | "day";
+const VIEWS: { value: View; label: string }[] = [
+  { value: "month", label: "Month" },
+  { value: "week", label: "Week" },
+  { value: "day", label: "Day" },
+];
+const VIEW_KEY = "me.calendar.view";
+/** Used until the work schedule loads (or if it can't). */
+const DEFAULT_HOURS = { start: 9 * 60, end: 17 * 60 };
+
+function savedView(): View {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === "week" || v === "day" ? v : "month";
+  } catch {
+    return "month";
+  }
+}
+
+/** First and last day shown, and the toolbar title. */
+function range(view: View, cursor: string): { first: string; last: string; title: string } {
+  if (view === "day") return { first: cursor, last: cursor, title: fullDay(cursor) };
+  if (view === "week") {
+    const first = startOfWeek(cursor);
+    const last = addDays(first, 6);
+    return { first, last, title: weekTitle(first, last) };
+  }
+  const weeks = monthGrid(cursor);
+  return { first: weeks[0][0], last: weeks[5][6], title: monthTitle(cursor) };
+}
+
+function step(view: View, cursor: string, by: number): string {
+  if (view === "month") return addMonths(cursor, by);
+  return addDays(cursor, by * (view === "week" ? 7 : 1));
+}
 
 type Panel =
   | { mode: "new"; defaults: EventDefaults }
@@ -32,6 +71,8 @@ const round =
 export function CalendarModule() {
   const [today] = useState(localToday);
   const [cursor, setCursor] = useState(today);
+  const [view, setViewState] = useState<View>(savedView);
+  const [hours, setHours] = useState(DEFAULT_HOURS);
   const [data, setData] = useState<Data | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,25 +81,42 @@ export function CalendarModule() {
   const [attempt, setAttempt] = useState(0);
   const sideRef = useRef<HTMLDivElement>(null);
 
-  const weeks = monthGrid(cursor);
-  const first = weeks[0][0];
-  const last = weeks[5][6];
+  const { first, last, title } = range(view, cursor);
   const month = startOfMonth(cursor);
+  const unit = view === "month" ? "month" : view === "week" ? "week" : "day";
 
-  const reload = useCallback(
-    () =>
-      Promise.all([calendarApi.occurrences(first, last), calendarApi.daysOff(), calendarApi.summary(month, today)]).then(
-        ([occurrences, daysOff, sum]) => {
-          setData({ occurrences, daysOff });
-          setSummary(sum);
-        },
-      ),
-    [first, last, month, today],
-  );
+  function setView(next: View) {
+    setViewState(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Remembering the view is only a convenience.
+    }
+  }
+
+  // Only the latest load may update the screen (an older, slower one would show the wrong range).
+  const latest = useRef(0);
+  const reload = useCallback(() => {
+    const request = ++latest.current;
+    return Promise.all([calendarApi.occurrences(first, last), calendarApi.daysOff(), calendarApi.summary(month, today)]).then(
+      ([occurrences, daysOff, sum]) => {
+        if (request !== latest.current) return;
+        setData({ occurrences, daysOff });
+        setSummary(sum);
+      },
+    );
+  }, [first, last, month, today]);
 
   useEffect(() => {
     reload().catch((e: Error) => setError(`Could not load your calendar: ${e.message}`));
   }, [reload, attempt]);
+
+  useEffect(() => {
+    calendarApi
+      .schedule()
+      .then((s) => setHours({ start: minutesOf(s.work_start), end: minutesOf(s.work_end) }))
+      .catch(() => {});
+  }, []);
 
   // On small screens the side column sits below the grid: bring an opened panel into view.
   useEffect(() => {
@@ -74,11 +132,45 @@ export function CalendarModule() {
     }
   }
 
+  /** A dragged event: shows the new time at once, saves the whole event (every repeat moves too), then reloads. */
+  async function move(o: Occurrence, change: TimeChange) {
+    setActionError(null);
+    const start_time = `${timeOf(change.start)}:00`;
+    const end_time = `${timeOf(change.end)}:00`;
+    setData((d) =>
+      d && {
+        ...d,
+        occurrences: d.occurrences.map((x) =>
+          x.id === o.id && x.occurrence_date === o.occurrence_date ? { ...x, start_date: change.date, end_date: change.date, start_time, end_time } : x,
+        ),
+      },
+    );
+    try {
+      const series = await calendarApi.event(o.id);
+      const shift = daysBetween(o.occurrence_date, change.date);
+      await calendarApi.saveEvent(o.id, {
+        ...toInput(series),
+        start_date: addDays(series.start_date, shift),
+        end_date: addDays(series.end_date, shift),
+        start_time: timeOf(change.start),
+        end_time: timeOf(change.end),
+      });
+    } catch (e) {
+      setActionError(`Could not move "${o.title}": ${(e as Error).message}`);
+    }
+    await reload().catch(() => {});
+  }
+
   async function save(input: EventInput) {
     if (panel?.mode === "edit") await calendarApi.saveEvent(panel.event.id, input);
     else await calendarApi.createEvent(input);
     await reload();
     setPanel(null);
+  }
+
+  function showDay(day: string) {
+    setCursor(day);
+    setView("day");
   }
 
   if (error) {
@@ -106,17 +198,32 @@ export function CalendarModule() {
             Today
           </button>
           <div className="flex items-center">
-            <button type="button" aria-label="Previous month" onClick={() => setCursor(addMonths(cursor, -1))} className={round}>
+            <button type="button" aria-label={`Previous ${unit}`} onClick={() => setCursor(step(view, cursor, -1))} className={round}>
               ‹
             </button>
-            <button type="button" aria-label="Next month" onClick={() => setCursor(addMonths(cursor, 1))} className={round}>
+            <button type="button" aria-label={`Next ${unit}`} onClick={() => setCursor(step(view, cursor, 1))} className={round}>
               ›
             </button>
           </div>
-          <h1 className="mr-auto text-xl font-semibold text-stone-800 dark:text-zinc-100">{monthTitle(cursor)}</h1>
+          <h1 className="mr-auto text-xl font-semibold text-stone-800 dark:text-zinc-100">{title}</h1>
+          <div role="group" aria-label="View" className="flex rounded-full bg-stone-100 p-1 dark:bg-zinc-800">
+            {VIEWS.map((v) => (
+              <button
+                key={v.value}
+                type="button"
+                aria-pressed={view === v.value}
+                onClick={() => setView(v.value)}
+                className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                  view === v.value ? "bg-white text-stone-800 shadow-sm dark:bg-zinc-950 dark:text-zinc-100" : "text-stone-500 hover:text-stone-700 dark:text-zinc-400"
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            onClick={() => setPanel({ mode: "new", defaults: { date: cursor.slice(0, 7) === today.slice(0, 7) ? today : month } })}
+            onClick={() => setPanel({ mode: "new", defaults: { date: first <= today && today <= last ? today : view === "month" ? month : cursor } })}
             className="rounded-full bg-gradient-to-r from-[#ff7a6b] to-[#ffa36c] px-5 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(255,122,107,0.35)] transition hover:-translate-y-0.5"
           >
             New event
@@ -126,7 +233,7 @@ export function CalendarModule() {
           </button>
         </div>
         {actionError && <Message kind="error">{actionError}</Message>}
-        {data ? (
+        {!data ? null : view === "month" ? (
           <MonthView
             month={cursor}
             today={today}
@@ -134,9 +241,25 @@ export function CalendarModule() {
             daysOff={data.daysOff}
             onCreate={(day) => setPanel({ mode: "new", defaults: { date: day } })}
             onOpen={(o) => openEvent(o.id)}
-            onShowDay={(day) => setPanel({ mode: "day", day })}
+            onShowDay={showDay}
+            onListDay={(day) => setPanel({ mode: "day", day })}
           />
         ) : (
+          <TimeGrid
+            key={view}
+            days={view === "week" ? Array.from({ length: 7 }, (_, i) => addDays(first, i)) : [cursor]}
+            today={today}
+            occurrences={data.occurrences}
+            daysOff={data.daysOff}
+            workStart={hours.start}
+            workEnd={hours.end}
+            onCreate={(defaults) => setPanel({ mode: "new", defaults })}
+            onOpen={(o) => openEvent(o.id)}
+            onMove={move}
+            onShowDay={view === "week" ? showDay : undefined}
+          />
+        )}
+        {!data && (
           <p className="p-6 text-sm text-stone-500">Loading your calendar…</p>
         )}
       </div>
@@ -146,7 +269,7 @@ export function CalendarModule() {
           <aside aria-label={panel.mode === "new" ? "New event" : "Edit event"} className={panelCard}>
             <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{panel.mode === "new" ? "New event" : "Edit event"}</p>
             <EventForm
-              key={panel.mode === "edit" ? panel.event.id : `new-${panel.defaults.date}`}
+              key={panel.mode === "edit" ? panel.event.id : `new-${panel.defaults.date}-${panel.defaults.startTime}-${panel.defaults.endTime}`}
               event={panel.mode === "edit" ? panel.event : undefined}
               defaults={panel.mode === "new" ? panel.defaults : undefined}
               submitLabel={panel.mode === "new" ? "Add event" : "Save changes"}
