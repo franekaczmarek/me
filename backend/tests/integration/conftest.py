@@ -97,6 +97,8 @@ def cleanup(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     supa: Supa = request.getfixturevalue("supa")
     for table in (
+        "calendar_task_links",
+        "calendar_events",
         "timeline_events",
         "timeline_categories",
         "todo_tasks",

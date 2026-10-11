@@ -1,19 +1,22 @@
-"""Work calendar API: weekly work schedule and days off (vacations, holidays)."""
+"""Calendar API: events (expanded into occurrences), weekly work schedule and days off (vacations, holidays)."""
 
 from datetime import date, time
 from typing import Annotated, Any, Self
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.calendar.capacity import DEFAULT_SCHEDULE, DayOff, WorkSchedule
+from app.calendar.events import occurrences
+from app.calendar.schemas import EVENT_COLUMNS, Event, EventIn, Occurrence, to_occurrence
 from app.core.supabase import Supabase, SupabaseDep, one_or_404
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
 SCHEDULE = "calendar_work_schedule"
 DAYS_OFF = "calendar_days_off"
+EVENTS = "calendar_events"
 SCHEDULE_COLUMNS = "work_days,work_start,work_end,task_minutes_workday,task_minutes_day_off"
 DAY_OFF_COLUMNS = "id,start_date,end_date,label"
 
@@ -115,4 +118,65 @@ def create_day_off(body: DayOffCreate, db: SupabaseDep) -> Any:
 @router.delete("/days-off/{day_off_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_day_off(day_off_id: UUID, db: SupabaseDep) -> Response:
     one_or_404(db.rest("DELETE", DAYS_OFF, params={"id": f"eq.{day_off_id}", "select": "id"}), "Day off")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- events -------------------------------------------------------------------------
+
+#: Longest range one request may expand (a year view plus margins).
+MAX_RANGE_DAYS = 400
+
+
+def load_events(db: Supabase, start: date, end: date) -> list[Event]:
+    """Events that may have an occurrence in [start, end]: starting before its end and not finished repeating."""
+    rows = db.rest(
+        "GET",
+        EVENTS,
+        params={
+            "select": EVENT_COLUMNS,
+            "start_date": f"lte.{end}",
+            "or": f"(recurrence.neq.none,end_date.gte.{start})",
+            "order": "start_date.asc,start_time.asc.nullsfirst",
+        },
+    )
+    return [Event(**row) for row in rows]
+
+
+def load_occurrences(db: Supabase, start: date, end: date) -> list[Occurrence]:
+    """All event occurrences overlapping [start, end]; all-day first on each day, then by time."""
+    found = [
+        to_occurrence(event, span)
+        for event in load_events(db, start, end)
+        for span in occurrences(event.span(), start, end)
+    ]
+    return sorted(found, key=lambda o: (o.start_date, not o.all_day, o.start_time or time(), o.title))
+
+
+@router.get("/events", response_model=list[Occurrence])
+def list_occurrences(start: date, end: date, db: SupabaseDep) -> Any:
+    """Occurrences (repeating events expanded) overlapping [start, end]."""
+    if end < start or (end - start).days > MAX_RANGE_DAYS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Give a range of 0–{MAX_RANGE_DAYS} days")
+    return load_occurrences(db, start, end)
+
+
+@router.get("/events/{event_id}", response_model=Event)
+def read_event(event_id: UUID, db: SupabaseDep) -> Any:
+    return one_or_404(db.rest("GET", EVENTS, params={"id": f"eq.{event_id}", "select": EVENT_COLUMNS}), "Event")
+
+
+@router.post("/events", response_model=Event, status_code=status.HTTP_201_CREATED)
+def create_event(body: EventIn, db: SupabaseDep) -> Any:
+    return db.rest("POST", EVENTS, params={"select": EVENT_COLUMNS}, json=body.row())[0]
+
+
+@router.put("/events/{event_id}", response_model=Event)
+def replace_event(event_id: UUID, body: EventIn, db: SupabaseDep) -> Any:
+    rows = db.rest("PATCH", EVENTS, params={"id": f"eq.{event_id}", "select": EVENT_COLUMNS}, json=body.row())
+    return one_or_404(rows, "Event")
+
+
+@router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_event(event_id: UUID, db: SupabaseDep) -> Response:
+    one_or_404(db.rest("DELETE", EVENTS, params={"id": f"eq.{event_id}", "select": "id"}), "Event")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
