@@ -5,28 +5,22 @@ Pure parts (`build_context`, `check_proposal`) are separate from the API call so
 """
 
 import json
-import logging
 from datetime import date, timedelta
-from functools import lru_cache
 from typing import Annotated, Any
 from uuid import UUID
 
 import anthropic
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, ValidationError
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 
 from app.calendar.capacity import DayOff, WorkSchedule, capacity_minutes, is_work_day
 from app.calendar.router import load_days_off, load_schedule
-from app.core.config import get_settings
+from app.core.claude import ClaudeDep, ask_structured
 from app.core.supabase import Supabase, SupabaseDep
 from app.todo.schemas import TASK_COLUMNS, Task
 
 router = APIRouter(prefix="/todo", tags=["todo"])
-logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5-5"
-# Server-side fallback: if a safety classifier declines, the API retries on Anthropic's recommended model.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 #: Assumed length of a task without an estimate.
 DEFAULT_MINUTES = 30
 TASKS = "todo_tasks"
@@ -250,54 +244,16 @@ def check_proposal(plan: ClaudePlan, context: dict[str, Any], tasks: list[Task])
 # --- Claude ---------------------------------------------------------------------------------
 
 
-@lru_cache
-def _client(api_key: str, workspace_id: str) -> anthropic.Anthropic:
-    headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
-    return anthropic.Anthropic(api_key=api_key, timeout=180, max_retries=2, default_headers=headers)
-
-
-def get_claude() -> anthropic.Anthropic:
-    """The Claude client; 503 when no API key is configured. Overridden in tests."""
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Planning with Claude isn't set up (no API key).")
-    return _client(settings.anthropic_api_key, settings.anthropic_workspace_id)
-
-
-ClaudeDep = Annotated[anthropic.Anthropic, Depends(get_claude)]
-
-
 def ask_claude(client: anthropic.Anthropic, context: dict[str, Any]) -> ClaudePlan:
-    try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(context, ensure_ascii=False)}],
-        )
-    except anthropic.AuthenticationError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The Claude API key was rejected.") from exc
-    except anthropic.RateLimitError as exc:
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Claude is busy right now; try again in a minute.") from exc
-    except anthropic.APIStatusError as exc:
-        logger.error("Claude API error %s (request %s): %s", exc.status_code, exc.request_id, exc.message)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Claude couldn't make a plan right now.") from exc
-    except anthropic.APIConnectionError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Can't reach Claude right now.") from exc
-
-    if response.stop_reason == "refusal":
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Claude declined to plan these tasks.")
-    if response.stop_reason == "max_tokens":
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The plan came back incomplete; try fewer days.")
-    text = "".join(block.text for block in response.content if block.type == "text")
-    try:
-        return ClaudePlan.model_validate_json(text)
-    except ValidationError as exc:
-        logger.error("Unexpected planner output (request %s): %s", response._request_id, exc)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Claude's plan couldn't be read.") from exc
+    return ask_structured(
+        client,
+        system=SYSTEM_PROMPT,
+        content=json.dumps(context, ensure_ascii=False),
+        schema=SCHEMA,
+        model=ClaudePlan,
+        effort="medium",
+        what="a plan",
+    )
 
 
 # --- routes ---------------------------------------------------------------------------------

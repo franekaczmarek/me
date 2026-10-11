@@ -1,7 +1,7 @@
 // Backend calls used by the to-do module.
 import { api } from "@/lib/api";
 import { dayOf } from "@/lib/timeline/dates";
-import type { DaysFeed, PlanChange, Proposal, Routine, RoutineInput, Stats, Task, TaskInput } from "./types";
+import type { DaysFeed, ParseResult, PlanChange, Proposal, Routine, RoutineInput, Stats, Task, TaskInput } from "./types";
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
@@ -16,6 +16,9 @@ export const todoApi = {
   completeTask: (id: string) => api<Task>(`/todo/tasks/${id}/complete`, json("POST", { today: localToday() })),
   reopenTask: (id: string) => api<Task>(`/todo/tasks/${id}/reopen`, { method: "POST" }),
   deleteTask: (id: string) => api<void>(`/todo/tasks/${id}`, { method: "DELETE" }),
+
+  /** Claude reads free text into task drafts for a preview; saves nothing. */
+  parse: (text: string) => api<ParseResult>("/todo/parse", json("POST", { text, today: localToday() })),
 
   /** Asks Claude for a plan of the next `days` days; changes nothing. */
   plan: (days = 7) => api<Proposal>("/todo/plan", json("POST", { today: localToday(), days })),

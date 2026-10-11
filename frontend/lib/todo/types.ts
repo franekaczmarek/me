@@ -93,3 +93,11 @@ export type Proposal = {
   warnings: string[];
   days: { date: string; capacity_min: number; planned_min: number }[];
 };
+
+/** A task as Claude read it from free text; not saved until the user adds it. */
+export type Draft = Pick<TaskInput, "title" | "planned_date" | "deadline" | "duration_min" | "priority" | "fixed_day" | "notes"> & {
+  /** Claude guessed the duration (shown as "~1h"). */
+  duration_estimated: boolean;
+};
+
+export type ParseResult = { tasks: Draft[]; warnings: string[] };

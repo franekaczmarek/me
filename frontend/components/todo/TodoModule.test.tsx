@@ -13,6 +13,7 @@ const todoApi = vi.hoisted(() => ({
   deleteTask: vi.fn(),
   stats: vi.fn(),
   routines: vi.fn(),
+  parse: vi.fn(),
 }));
 vi.mock("@/lib/todo/api", () => ({ todoApi, localToday: () => "2026-03-04" }));
 

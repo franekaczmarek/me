@@ -54,3 +54,19 @@ def test_live_claude_plans_inbox_tasks(api: TestClient) -> None:
     assert proposal["summary"]
     moved = {c["task_id"]: c for c in proposal["changes"]}
     assert urgent["id"] in moved and moved[urgent["id"]]["to_date"] <= (date.today() + timedelta(days=2)).isoformat()
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("RUN_CLAUDE_TESTS") == "1" and get_settings().anthropic_api_key),
+    reason="Live Claude test: set RUN_CLAUDE_TESTS=1 and ANTHROPIC_API_KEY (costs money)",
+)
+def test_live_claude_reads_a_polish_note(api: TestClient) -> None:
+    today = date.today()
+    response = api.post("/todo/parse", json={"text": "dentysta jutro o 15, ważne; kiedyś posprzątać garaż", "today": today.isoformat()})
+    assert response.status_code == 200, response.text
+    tasks = {t["title"].lower(): t for t in response.json()["tasks"]}
+    dentist = next(t for title, t in tasks.items() if "dentyst" in title)
+    assert dentist["planned_date"] == (today + timedelta(days=1)).isoformat()
+    assert dentist["priority"] == "high"
+    garage = next(t for title, t in tasks.items() if "garaż" in title)
+    assert garage["planned_date"] is None and garage["priority"] == "low"

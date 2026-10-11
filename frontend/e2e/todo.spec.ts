@@ -177,3 +177,40 @@ test("a user reviews Claude's plan and applies part of it", async ({ page, reque
     await api.delete(`/todo/tasks/${photos.id}`);
   }
 });
+
+test("a user types tasks in plain words, reviews them and adds them", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const tag = `e2e-${Date.now()}`;
+
+  // What Claude read is canned (a live call costs money); creating the tasks runs on the real stack.
+  await page.route("**/todo/parse", (route) =>
+    route.fulfill({
+      json: {
+        warnings: [],
+        tasks: [
+          { title: `${tag} dentist`, notes: "at 15:00", planned_date: localDay(1), deadline: null, duration_min: 60, duration_estimated: true, priority: "high", fixed_day: true },
+          { title: `${tag} garage`, notes: "", planned_date: null, deadline: null, duration_min: 180, duration_estimated: true, priority: "low", fixed_day: false },
+        ],
+      },
+    }),
+  );
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const bar = page.getByRole("region", { name: "Quick add" });
+    await bar.getByLabel("Type tasks").fill("dentist tomorrow at 3pm, important; someday clean the garage");
+    await bar.getByRole("button", { name: "Read" }).click();
+    await expect(bar.getByLabel("Task title").first()).toHaveValue(`${tag} dentist`);
+    await expect(bar.getByText("⏱ ~1h")).toBeVisible();
+    await bar.getByRole("button", { name: "Add 2 tasks" }).click();
+
+    await expect(page.getByRole("region", { name: /^Tomorrow/ }).getByText(`${tag} dentist`)).toBeVisible();
+    await expect(page.getByRole("region", { name: "Inbox" }).getByText(`${tag} garage`)).toBeVisible();
+    await expect(bar.getByLabel("Type tasks")).toHaveValue("");
+  } finally {
+    const feed = await (await api.get(`/todo/days?today=${localDay()}`)).json();
+    const all = [...feed.inbox, ...feed.days.flatMap((d: { tasks: unknown[] }) => d.tasks)] as { id: string; title: string }[];
+    for (const t of all.filter((t) => t.title.startsWith(tag))) await api.delete(`/todo/tasks/${t.id}`);
+  }
+});

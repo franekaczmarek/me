@@ -9,6 +9,7 @@ import { DragProvider, DropZone, INBOX } from "./dnd";
 import { PlanDialog } from "./PlanDialog";
 import { QuickAdd } from "./QuickAdd";
 import { RoutinesCard } from "./RoutinesCard";
+import { SmartAdd } from "./SmartAdd";
 import { StatsCard } from "./StatsCard";
 import { TaskForm } from "./TaskForm";
 import { TaskRow } from "./TaskRow";
@@ -113,6 +114,7 @@ export function TodoModule() {
             </button>
             {actionError && <Message kind="error">{actionError}</Message>}
           </div>
+          <SmartAdd today={feed.today} onAdded={() => reload().catch(() => {})} />
           <div className="flex flex-col gap-4 md:max-h-[calc(100vh-11rem)] md:overflow-y-auto md:px-1 md:py-2" data-testid="day-list">
             {feed.days.map((day) => (
               <DayCard

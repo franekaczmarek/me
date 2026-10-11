@@ -9,11 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.calendar.capacity import DEFAULT_SCHEDULE
+from app.core import claude as claude_core
 from app.main import app
 from app.todo import planner
 from app.todo.planner import ClaudePlan, build_context, check_proposal
 from app.todo.schemas import Task
 from tests.conftest import make_token
+from tests.fake_claude import FakeClaude
 from tests.fake_supabase import FakeSupabase
 
 TODAY = date(2026, 3, 4)  # Wednesday
@@ -153,35 +155,6 @@ def test_warns_about_deadlines_and_overloaded_days() -> None:
 # --- routes --------------------------------------------------------------------------------------
 
 
-class FakeClaude:
-    """Stands in for anthropic.Anthropic: records the request, returns a canned response or raises."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-        self.result: object = None
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
-
-    def _create(self, **kwargs):
-        self.calls.append(kwargs)
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
-
-    def reply(self, data: object, stop_reason: str = "end_turn") -> None:
-        text = data if isinstance(data, str) else json.dumps(data)
-        self.result = SimpleNamespace(
-            stop_reason=stop_reason, content=[SimpleNamespace(type="text", text=text)], _request_id="req_1"
-        )
-
-
-@pytest.fixture
-def claude() -> FakeClaude:
-    fake = FakeClaude()
-    app.dependency_overrides[planner.get_claude] = lambda: fake
-    yield fake
-    app.dependency_overrides.pop(planner.get_claude, None)
-
-
 @pytest.fixture
 def api(client: TestClient) -> TestClient:
     client.headers["Authorization"] = f"Bearer {make_token()}"
@@ -197,17 +170,8 @@ def queue_planning_data(fake_db: FakeSupabase, rows: list[dict]) -> None:
     fake_db.reply(200, [])  # days off
 
 
-def test_client_sends_the_workspace_header_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    planner._client.cache_clear()
-    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="k", anthropic_workspace_id="wrkspc_1"))
-    assert planner.get_claude().default_headers["anthropic-workspace-id"] == "wrkspc_1"
-    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="k", anthropic_workspace_id=""))
-    assert "anthropic-workspace-id" not in planner.get_claude().default_headers
-    planner._client.cache_clear()
-
-
 def test_plan_without_api_key_is_503(api: TestClient, fake_db: FakeSupabase, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner, "get_settings", lambda: SimpleNamespace(anthropic_api_key="", anthropic_workspace_id=""))
+    monkeypatch.setattr(claude_core, "get_settings", lambda: SimpleNamespace(anthropic_api_key="", anthropic_workspace_id=""))
     response = api.post("/todo/plan", json={"today": "2026-03-04"})
     assert response.status_code == 503
     assert "isn't set up" in response.json()["detail"]
