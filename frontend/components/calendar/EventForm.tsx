@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button, Field, Message } from "@/components/ui";
 import type { CalendarEvent, EventInput, Recurrence } from "@/lib/calendar/types";
@@ -41,6 +42,7 @@ export function EventForm({ event, defaults, submitLabel, onSave, onCancel, onDe
   const [color, setColor] = useState(event?.color ?? PALETTE[4]);
   const [location, setLocation] = useState(event?.location ?? "");
   const [notes, setNotes] = useState(event?.notes ?? "");
+  const [addToTimeline, setAddToTimeline] = useState(event?.add_to_timeline ?? false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -71,6 +73,7 @@ export function EventForm({ event, defaults, submitLabel, onSave, onCancel, onDe
     if (!allDay && (!startTime || !endTime)) return setError("Enter the start and end time.");
     if (!allDay && end === startDate && endTime <= startTime) return setError("The event must end after it starts.");
     if (recurrence !== "none" && until && until < startDate) return setError("Repeating can't stop before the first day.");
+    const toTimeline = addToTimeline && recurrence === "none";
     run(() =>
       onSave({
         title: title.trim(),
@@ -83,7 +86,7 @@ export function EventForm({ event, defaults, submitLabel, onSave, onCancel, onDe
         color,
         recurrence,
         recurrence_until: recurrence === "none" ? null : until || null,
-        add_to_timeline: event?.add_to_timeline ?? false,
+        add_to_timeline: toTimeline,
       }),
     );
   }
@@ -156,6 +159,27 @@ export function EventForm({ event, defaults, submitLabel, onSave, onCancel, onDe
           maxLength={5000}
           className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base outline-none focus:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-900"
         />
+      </label>
+
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={addToTimeline && recurrence === "none"}
+          disabled={recurrence !== "none"}
+          onChange={(e) => setAddToTimeline(e.target.checked)}
+        />
+        <span>
+          Add to my life timeline
+          <span className="block text-xs text-stone-500">
+            {recurrence !== "none" ? "Only one-off events can go on the timeline." : "A moment worth remembering, like a wedding or a big trip."}
+          </span>
+          {event?.timeline_event_id && event.add_to_timeline && (
+            <Link href="/timeline" className="text-xs font-medium text-[#e0574a] hover:underline">
+              View on the timeline →
+            </Link>
+          )}
+        </span>
       </label>
 
       <div className="flex flex-wrap items-center gap-2">

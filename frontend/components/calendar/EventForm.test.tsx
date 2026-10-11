@@ -68,4 +68,49 @@ describe("EventForm", () => {
     await submit();
     expect(await screen.findByText("Database error")).toBeInTheDocument();
   });
+
+  it("adds one-off events to the life timeline", async () => {
+    const onSave = setup();
+    await userEvent.type(screen.getByLabelText("Title"), "Kasia's wedding");
+    await userEvent.click(screen.getByLabelText(/Add to my life timeline/));
+    await submit();
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ add_to_timeline: true }));
+  });
+
+  it("keeps repeating events off the timeline", async () => {
+    const onSave = setup();
+    await userEvent.type(screen.getByLabelText("Title"), "Gym");
+    await userEvent.click(screen.getByLabelText(/Add to my life timeline/));
+    await userEvent.selectOptions(screen.getByLabelText("Repeat"), "weekly");
+    expect(screen.getByLabelText(/Add to my life timeline/)).toBeDisabled();
+    expect(screen.getByText("Only one-off events can go on the timeline.")).toBeInTheDocument();
+    await submit();
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ add_to_timeline: false, recurrence: "weekly" }));
+  });
+
+  it("links to the timeline entry of a saved event", () => {
+    render(
+      <EventForm
+        event={{
+          id: "e1",
+          title: "Wedding",
+          notes: "",
+          location: "",
+          start_date: "2026-06-20",
+          end_date: "2026-06-20",
+          start_time: null,
+          end_time: null,
+          color: "#9b87f5",
+          recurrence: "none",
+          recurrence_until: null,
+          add_to_timeline: true,
+          timeline_event_id: "t1",
+        }}
+        submitLabel="Save changes"
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "View on the timeline →" })).toHaveAttribute("href", "/timeline");
+  });
 });

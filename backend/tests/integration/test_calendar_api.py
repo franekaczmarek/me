@@ -113,3 +113,19 @@ def test_events_reach_the_todo_feed_and_tasks_reach_the_calendar(api: TestClient
     found = api.get("/todo/tasks", params={"start": "2026-10-12", "end": "2026-10-18"}).json()
     assert [t["id"] for t in found] == [task["id"]]
     assert found[0]["source_event_id"] is None
+
+
+def test_events_can_be_added_to_the_life_timeline(api: TestClient) -> None:
+    body = {"title": "Kasia's wedding", "start_date": "2026-06-20", "end_date": "2026-06-21", "add_to_timeline": True}
+    event = api.post("/calendar/events", json=body).json()
+    timeline = {e["id"]: e for e in api.get("/timeline/events").json()}
+    entry = timeline[event["timeline_event_id"]]
+    assert entry["title"] == "Kasia's wedding"
+
+    renamed = api.put(f"/calendar/events/{event['id']}", json={**body, "title": "Kasia & Tom's wedding"}).json()
+    assert renamed["timeline_event_id"] == event["timeline_event_id"]
+    assert api.get(f"/timeline/events/{event['timeline_event_id']}").json()["title"] == "Kasia & Tom's wedding"
+
+    unticked = api.put(f"/calendar/events/{event['id']}", json={**body, "add_to_timeline": False}).json()
+    assert unticked["timeline_event_id"] is None
+    assert api.get(f"/timeline/events/{event['timeline_event_id']}").status_code == 404

@@ -49,6 +49,8 @@ class EventIn(BaseModel):
             raise ValueError("recurrence_until must not be before start_date")
         if self.recurrence == "none":
             self.recurrence_until = None
+        elif self.add_to_timeline:
+            raise ValueError("Only a one-off event can be added to the timeline")
         return self
 
     def row(self) -> dict[str, Any]:

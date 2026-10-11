@@ -255,3 +255,32 @@ test("a user types events in plain words, reviews them and adds them", async ({ 
     for (const e of all.filter((e) => e.title.startsWith("E2E"))) await api.delete(`/calendar/events/${e.id}`);
   }
 });
+
+test("a user puts a calendar event on the life timeline", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const day = localDay(2);
+  try {
+    await page.getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "New event" }).click();
+    const form = page.getByRole("complementary", { name: "New event" });
+    await form.getByLabel("Title").fill("E2E wedding");
+    await form.getByLabel("Starts").fill(day);
+    await form.getByLabel(/Add to my life timeline/).check();
+    await form.getByRole("button", { name: "Add event" }).click();
+    await expect(form).toBeHidden();
+
+    await page.getByRole("region", { name: "Upcoming" }).getByText("E2E wedding").click();
+    const edit = page.getByRole("complementary", { name: "Edit event" });
+    await edit.getByRole("link", { name: "View on the timeline →" }).click();
+    await expect(page).toHaveURL(/\/timeline$/);
+    const entries: { title: string; start: string }[] = await (await api.get("/timeline/events")).json();
+    expect(entries.map((e) => e.title)).toContain("E2E wedding");
+  } finally {
+    const events: { id: string; title: string; timeline_event_id: string | null }[] = await (await api.get(`/calendar/events?start=${day}&end=${day}`)).json();
+    for (const e of events.filter((e) => e.title.startsWith("E2E"))) {
+      await api.delete(`/calendar/events/${e.id}`);
+      if (e.timeline_event_id) await api.delete(`/timeline/events/${e.timeline_event_id}`);
+    }
+  }
+});

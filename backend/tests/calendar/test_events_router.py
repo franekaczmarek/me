@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -127,3 +129,63 @@ def test_missing_event_is_404(api: TestClient, fake_db: FakeSupabase, method: st
     fake_db.reply(200, [])
     kwargs = {"json": BODY} if method == "put" else {}
     assert getattr(api, method)(f"/calendar/events/{EVENT_ID}", **kwargs).status_code == 404
+
+
+TIMELINE_ID = "99999999-9999-9999-9999-999999999999"
+WEDDING = {**ROW, "title": "Wedding", "notes": "Kasia & Tom", "recurrence": "none", "start_date": "2026-06-20", "end_date": "2026-06-21"}
+
+
+def test_timeline_events_need_a_one_off_event(api: TestClient, fake_db: FakeSupabase) -> None:
+    assert api.post("/calendar/events", json={**BODY, "add_to_timeline": True}).status_code == 422
+
+
+def test_adding_to_the_timeline_creates_and_links_an_entry(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(201, [{**WEDDING, "add_to_timeline": True}])
+    fake_db.reply(201, [{"id": TIMELINE_ID}])
+    fake_db.reply(200, [{**WEDDING, "add_to_timeline": True, "timeline_event_id": TIMELINE_ID}])
+    body = {"title": "Wedding", "notes": "Kasia & Tom", "start_date": "2026-06-20", "end_date": "2026-06-21", "add_to_timeline": True}
+    response = api.post("/calendar/events", json=body)
+    assert response.json()["timeline_event_id"] == TIMELINE_ID
+    _, timeline, link = fake_db.requests
+    assert timeline.url.path.endswith("/timeline_events")
+    assert json.loads(timeline.content) == {
+        "title": "Wedding",
+        "description": "Kasia & Tom",
+        "start_date": "2026-06-20",
+        "start_precision": "day",
+        "end_date": "2026-06-21",
+        "end_precision": "day",
+    }
+    assert json.loads(link.content) == {"timeline_event_id": TIMELINE_ID}
+
+
+def test_editing_updates_the_linked_entry(api: TestClient, fake_db: FakeSupabase) -> None:
+    linked = {**WEDDING, "end_date": "2026-06-20", "add_to_timeline": True, "timeline_event_id": TIMELINE_ID}
+    fake_db.reply(200, [linked])
+    fake_db.reply(200, [{"id": TIMELINE_ID}])
+    body = {"title": "Wedding", "start_date": "2026-06-20", "end_date": "2026-06-20", "add_to_timeline": True}
+    assert api.put(f"/calendar/events/{EVENT_ID}", json=body).status_code == 200
+    update = fake_db.last
+    assert update.method == "PATCH" and update.url.params["id"] == f"eq.{TIMELINE_ID}"
+    assert json.loads(update.content)["end_date"] is None
+
+
+def test_a_deleted_entry_is_made_again(api: TestClient, fake_db: FakeSupabase) -> None:
+    linked = {**WEDDING, "add_to_timeline": True, "timeline_event_id": TIMELINE_ID}
+    fake_db.reply(200, [linked])
+    fake_db.reply(200, [])  # nothing updated: the entry is gone
+    fake_db.reply(201, [{"id": "88888888-8888-8888-8888-888888888888"}])
+    fake_db.reply(200, [{**linked, "timeline_event_id": "88888888-8888-8888-8888-888888888888"}])
+    body = {"title": "Wedding", "start_date": "2026-06-20", "end_date": "2026-06-21", "add_to_timeline": True}
+    assert api.put(f"/calendar/events/{EVENT_ID}", json=body).json()["timeline_event_id"] == "88888888-8888-8888-8888-888888888888"
+
+
+def test_unticking_removes_the_entry(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [{**WEDDING, "timeline_event_id": TIMELINE_ID}])
+    fake_db.reply(204, [])
+    fake_db.reply(200, [WEDDING])
+    body = {"title": "Wedding", "start_date": "2026-06-20", "end_date": "2026-06-21"}
+    assert api.put(f"/calendar/events/{EVENT_ID}", json=body).json()["timeline_event_id"] is None
+    _, delete, unlink = fake_db.requests
+    assert delete.method == "DELETE" and delete.url.params["id"] == f"eq.{TIMELINE_ID}"
+    assert json.loads(unlink.content) == {"timeline_event_id": None}

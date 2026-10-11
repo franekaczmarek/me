@@ -17,6 +17,7 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 SCHEDULE = "calendar_work_schedule"
 DAYS_OFF = "calendar_days_off"
 EVENTS = "calendar_events"
+TIMELINE_EVENTS = "timeline_events"
 SCHEDULE_COLUMNS = "work_days,work_start,work_end,task_minutes_workday,task_minutes_day_off"
 DAY_OFF_COLUMNS = "id,start_date,end_date,label"
 
@@ -165,15 +166,51 @@ def read_event(event_id: UUID, db: SupabaseDep) -> Any:
     return one_or_404(db.rest("GET", EVENTS, params={"id": f"eq.{event_id}", "select": EVENT_COLUMNS}), "Event")
 
 
+def timeline_row(event: Event) -> dict[str, Any]:
+    """The life-timeline entry for an event: a day, or a period for a several-day event."""
+    period = event.end_date != event.start_date
+    return {
+        "title": event.title,
+        "description": event.notes,
+        "start_date": event.start_date.isoformat(),
+        "start_precision": "day",
+        "end_date": event.end_date.isoformat() if period else None,
+        "end_precision": "day" if period else None,
+    }
+
+
+def sync_timeline(db: Supabase, row: dict[str, Any]) -> dict[str, Any]:
+    """Keeps the event's timeline entry in step: created, updated, or removed when unticked.
+
+    Deleting the calendar event keeps the entry: it is part of the user's life story by then.
+    """
+    event = Event(**row)
+    linked = event.timeline_event_id
+    if event.add_to_timeline and linked:
+        updated = db.rest("PATCH", TIMELINE_EVENTS, params={"id": f"eq.{linked}", "select": "id"}, json=timeline_row(event))
+        if updated:
+            return row
+        linked = None  # the entry was deleted on the timeline: make a new one
+    if event.add_to_timeline:
+        created = db.rest("POST", TIMELINE_EVENTS, params={"select": "id"}, json=timeline_row(event))[0]
+        link = {"timeline_event_id": created["id"]}
+    elif linked:
+        db.rest("DELETE", TIMELINE_EVENTS, params={"id": f"eq.{linked}"}, prefer="return=minimal")
+        link = {"timeline_event_id": None}
+    else:
+        return row
+    return db.rest("PATCH", EVENTS, params={"id": f"eq.{event.id}", "select": EVENT_COLUMNS}, json=link)[0]
+
+
 @router.post("/events", response_model=Event, status_code=status.HTTP_201_CREATED)
 def create_event(body: EventIn, db: SupabaseDep) -> Any:
-    return db.rest("POST", EVENTS, params={"select": EVENT_COLUMNS}, json=body.row())[0]
+    return sync_timeline(db, db.rest("POST", EVENTS, params={"select": EVENT_COLUMNS}, json=body.row())[0])
 
 
 @router.put("/events/{event_id}", response_model=Event)
 def replace_event(event_id: UUID, body: EventIn, db: SupabaseDep) -> Any:
     rows = db.rest("PATCH", EVENTS, params={"id": f"eq.{event_id}", "select": EVENT_COLUMNS}, json=body.row())
-    return one_or_404(rows, "Event")
+    return sync_timeline(db, one_or_404(rows, "Event"))
 
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
