@@ -1,6 +1,6 @@
 // Backend calls for the calendar: events, side-card summary, work schedule and days off.
 import { api } from "@/lib/api";
-import type { CalendarEvent, EventInput, Occurrence, Summary } from "./types";
+import type { CalendarEvent, EventInput, Occurrence, Suggestion, SuggestResult, Summary } from "./types";
 
 export type WorkSchedule = {
   /** ISO weekdays, 1 = Monday … 7 = Sunday. */
@@ -29,4 +29,27 @@ export const calendarApi = {
   saveEvent: (id: string, input: EventInput) => api<CalendarEvent>(`/calendar/events/${id}`, json("PUT", input)),
   deleteEvent: (id: string) => api<void>(`/calendar/events/${id}`, { method: "DELETE" }),
   summary: (month: string, today: string) => api<Summary>(`/calendar/summary?month=${month}&today=${today}`),
+
+  /** Claude proposes tasks for the events of the next 30 days; saves nothing. */
+  suggest: (today: string) => api<SuggestResult>("/calendar/suggest", json("POST", { today })),
+  /** Creates the accepted tasks (`title`/`planned_date` as edited) and remembers dismissed suggestions. */
+  applySuggestions: (today: string, accepted: { suggestion: Suggestion; title: string; planned_date: string }[], dismissed: Suggestion[]) =>
+    api<{ created: number; dismissed: number }>(
+      "/calendar/suggest/apply",
+      json("POST", {
+        today,
+        accepted: accepted.map(({ suggestion: s, title, planned_date }) => ({
+          event_id: s.event_id,
+          occurrence_date: s.occurrence_date,
+          suggested_title: s.title,
+          title,
+          planned_date,
+          deadline: s.deadline,
+          duration_min: s.duration_min,
+          priority: s.priority,
+          fixed_day: s.fixed_day && planned_date === s.occurrence_date,
+        })),
+        dismissed: dismissed.map((s) => ({ event_id: s.event_id, occurrence_date: s.occurrence_date, suggested_title: s.title })),
+      }),
+    ),
 };

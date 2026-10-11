@@ -17,6 +17,8 @@ const calendarApi = vi.hoisted(() => ({
   saveEvent: vi.fn(),
   deleteEvent: vi.fn(),
   summary: vi.fn(),
+  suggest: vi.fn(),
+  applySuggestions: vi.fn(),
 }));
 vi.mock("@/lib/calendar/api", () => ({ calendarApi }));
 const todoApi = vi.hoisted(() => ({
@@ -306,5 +308,36 @@ describe("CalendarModule", () => {
     fireEvent.pointerMove(window, { clientX: 300, clientY: 40, pointerId: 1 });
     fireEvent.pointerUp(window, { pointerId: 1 });
     expect(todoApi.updateTask).toHaveBeenCalledWith("t1", { planned_date: "2026-10-16" });
+  });
+
+  it("prepares tasks from upcoming events with Claude", async () => {
+    calendarApi.suggest.mockResolvedValue({
+      suggestions: [
+        {
+          event_id: "e1",
+          occurrence_date: "2026-10-25",
+          event_title: "Mom's birthday",
+          event_color: "#f27fb2",
+          title: "Buy a present",
+          planned_date: "2026-10-15",
+          deadline: "2026-10-25",
+          duration_min: 60,
+          priority: "normal",
+          fixed_day: false,
+          reason: "Time to shop",
+        },
+      ],
+      events: 2,
+      warnings: [],
+    });
+    calendarApi.applySuggestions.mockResolvedValue({ created: 1, dismissed: 0 });
+    render(<CalendarModule />);
+    await findGrid();
+    await userEvent.click(screen.getByRole("button", { name: "✨ Prepare tasks" }));
+    const dialog = screen.getByRole("dialog", { name: "Tasks from your calendar" });
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Add 1 task" }));
+    expect(calendarApi.applySuggestions).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calendarApi.occurrences).toHaveBeenCalledTimes(2);
   });
 });

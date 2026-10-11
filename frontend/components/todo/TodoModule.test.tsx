@@ -16,6 +16,8 @@ const todoApi = vi.hoisted(() => ({
   parse: vi.fn(),
 }));
 vi.mock("@/lib/todo/api", () => ({ todoApi, localToday: () => "2026-03-04" }));
+const calendarApi = vi.hoisted(() => ({ suggest: vi.fn(), applySuggestions: vi.fn() }));
+vi.mock("@/lib/calendar/api", () => ({ calendarApi }));
 
 const TODAY = "2026-03-04";
 const task = (fields: Partial<Task>): Task => ({
@@ -114,6 +116,15 @@ describe("TodoModule", () => {
     expect(within(today).getByText("3h of 3h")).toHaveAttribute("title", "Tasks 1h + events 2h");
     expect(within(today).getByRole("meter", { name: "Planned time" })).toHaveAttribute("aria-valuenow", "180");
     expect(within(today).getByLabelText("From a calendar event")).toBeInTheDocument();
+  });
+
+  it("asks Claude for tasks from the calendar", async () => {
+    calendarApi.suggest.mockResolvedValue({ suggestions: [], events: 0, warnings: [] });
+    render(<TodoModule />);
+    await userEvent.click(await screen.findByRole("button", { name: "📅 From calendar" }));
+    const dialog = screen.getByRole("dialog", { name: "Tasks from your calendar" });
+    expect(await within(dialog).findByText("Nothing in your calendar for the next 30 days.")).toBeInTheDocument();
+    expect(calendarApi.suggest).toHaveBeenCalledWith(TODAY);
   });
 
   it("checks off and reopens tasks, then reloads", async () => {

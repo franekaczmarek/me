@@ -6,6 +6,7 @@ import { todoApi } from "@/lib/todo/api";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
 import { DragProvider, DropZone, INBOX } from "./dnd";
+import { SuggestDialog } from "@/components/calendar/SuggestDialog";
 import { PlanDialog } from "./PlanDialog";
 import { QuickAdd } from "./QuickAdd";
 import { RoutinesCard } from "./RoutinesCard";
@@ -25,6 +26,7 @@ export function TodoModule() {
   // Bumped after every change so the statistics reload too.
   const [version, setVersion] = useState(0);
   const [planning, setPlanning] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const todayRef = useRef<HTMLElement>(null);
   const centred = useRef(false);
 
@@ -112,6 +114,14 @@ export function TodoModule() {
             >
               ✨ Plan with Claude
             </button>
+            <button
+              type="button"
+              onClick={() => setSuggesting(true)}
+              title="Claude proposes tasks for the events of the next 30 days"
+              className="rounded-full border border-stone-200 bg-white px-5 py-2 text-sm font-medium text-stone-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            >
+              📅 From calendar
+            </button>
             {actionError && <Message kind="error">{actionError}</Message>}
           </div>
           <SmartAdd today={feed.today} onAdded={() => reload().catch(() => {})} />
@@ -184,6 +194,9 @@ export function TodoModule() {
           <RoutinesCard onChanged={() => reload().catch(() => {})} />
         </div>
       </div>
+      {suggesting && (
+        <SuggestDialog today={feed.today} onClose={() => setSuggesting(false)} onApplied={() => reload().catch(() => {})} />
+      )}
       {planning && (
         <PlanDialog today={feed.today} onClose={() => setPlanning(false)} onApplied={() => reload().catch(() => {})} />
       )}

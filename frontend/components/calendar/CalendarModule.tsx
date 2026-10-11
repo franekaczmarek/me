@@ -16,6 +16,7 @@ import { TaskRow } from "@/components/todo/TaskRow";
 import { type EventDefaults, EventForm } from "./EventForm";
 import { MonthView } from "./MonthView";
 import { SummaryCard, UpcomingCard } from "./SideCards";
+import { SuggestDialog } from "./SuggestDialog";
 import { type TimeChange, TimeGrid } from "./TimeGrid";
 import { WorkSettings } from "./WorkSettings";
 
@@ -84,6 +85,7 @@ export function CalendarModule() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [attempt, setAttempt] = useState(0);
+  const [suggesting, setSuggesting] = useState(false);
   const sideRef = useRef<HTMLDivElement>(null);
 
   const { first, last, title } = range(view, cursor);
@@ -264,6 +266,9 @@ export function CalendarModule() {
             >
               New event
             </button>
+            <button type="button" onClick={() => setSuggesting(true)} className={secondary}>
+              ✨ Prepare tasks
+            </button>
             <button type="button" aria-label="Work schedule and days off" title="Work schedule and days off" onClick={() => setPanel({ mode: "settings" })} className={round}>
               ⚙
             </button>
@@ -371,6 +376,7 @@ export function CalendarModule() {
           )}
         </div>
       </div>
+      {suggesting && <SuggestDialog today={today} onClose={() => setSuggesting(false)} onApplied={() => reload().catch(() => {})} />}
     </DragProvider>
   );
 }

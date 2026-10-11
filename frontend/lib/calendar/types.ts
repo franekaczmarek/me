@@ -49,3 +49,20 @@ export type Upcoming = {
 };
 
 export type Summary = { month: MonthSummary; upcoming: Upcoming[] };
+
+/** A task Claude proposes for an event occurrence (nothing saved yet). */
+export type Suggestion = {
+  event_id: string;
+  occurrence_date: string;
+  event_title: string;
+  event_color: string;
+  title: string;
+  planned_date: string;
+  deadline: string | null;
+  duration_min: number | null;
+  priority: "low" | "normal" | "high";
+  fixed_day: boolean;
+  reason: string;
+};
+
+export type SuggestResult = { suggestions: Suggestion[]; events: number; warnings: string[] };

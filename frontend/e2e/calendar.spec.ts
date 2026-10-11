@@ -182,3 +182,49 @@ test("calendar events show in the to-do list, and tasks can be dragged between c
     await api.delete(`/todo/tasks/${task.id}`);
   }
 });
+
+test("a user accepts Claude's task for a birthday, and the event shows it has a task", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const birthday = localDay(12);
+  const event = await (await api.post("/calendar/events", { title: "E2E Mom's birthday", start_date: birthday, end_date: birthday, color: "#f27fb2" })).json();
+  // Claude's answer is stubbed (the live call is covered by the opt-in backend test); applying runs for real.
+  const suggestion = (title: string, planned: string) => ({
+    event_id: event.id,
+    occurrence_date: birthday,
+    event_title: event.title,
+    event_color: "#f27fb2",
+    title,
+    planned_date: planned,
+    deadline: birthday,
+    duration_min: 60,
+    priority: "normal",
+    fixed_day: false,
+    reason: "Time to find something nice",
+  });
+  await page.route("**/calendar/suggest", (route) =>
+    route.fulfill({
+      json: { suggestions: [suggestion("E2E buy a present", localDay(2)), suggestion("E2E order a cake", localDay(9))], events: 1, warnings: [] },
+    }),
+  );
+  try {
+    await page.getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "✨ Prepare tasks" }).click();
+    const dialog = page.getByRole("dialog", { name: "Tasks from your calendar" });
+    await dialog.getByRole("checkbox", { name: "Add E2E order a cake" }).uncheck();
+    await dialog.getByRole("button", { name: "Add 1 task" }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByRole("region", { name: "Upcoming" }).getByRole("button", { name: /E2E Mom's birthday.*✓ task/ })).toBeVisible();
+
+    await page.getByRole("link", { name: "To-do" }).click();
+    const day = page.locator(`[data-day="${localDay(2)}"]`);
+    await expect(day.getByText("E2E buy a present")).toBeVisible();
+    await expect(day.getByLabel("From a calendar event")).toBeVisible();
+    await expect(page.getByText("E2E order a cake")).toBeHidden();
+  } finally {
+    const tasks: { id: string; title: string }[] = await (await api.get(`/todo/tasks?start=${localDay(0)}&end=${birthday}`)).json();
+    for (const t of tasks.filter((t) => t.title.startsWith("E2E"))) await api.delete(`/todo/tasks/${t.id}`);
+    await api.delete(`/calendar/events/${event.id}`);
+  }
+});
