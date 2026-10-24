@@ -97,7 +97,7 @@ describe("TodoModule", () => {
     expect(within(card(/Inbox/)).getByText("Renew passport")).toBeInTheDocument();
   });
 
-  it("shows calendar events on their day and counts their time", async () => {
+  it("shows calendar events on their day, counts their time and marks where tasks came from", async () => {
     todoApi.days.mockResolvedValue({
       ...feed,
       days: [
@@ -105,7 +105,10 @@ describe("TodoModule", () => {
           planned_min: 60,
           event_min: 120,
           events: [{ id: "e1", title: "Dinner", color: "#9b87f5", start_time: "18:00:00", end_time: "20:00:00", all_day: false }],
-          tasks: [task({ id: "wine", title: "Buy wine", source_event_id: "e1", source_occurrence_date: TODAY })],
+          tasks: [
+            task({ id: "wine", title: "Buy wine", source_event_id: "e1", source_occurrence_date: TODAY }),
+            task({ id: "pay", title: "Pay the invoice", source_mail_id: "m1" }),
+          ],
         }),
       ],
     });
@@ -116,6 +119,7 @@ describe("TodoModule", () => {
     expect(within(today).getByText("3h of 3h")).toHaveAttribute("title", "Tasks 1h + events 2h");
     expect(within(today).getByRole("meter", { name: "Planned time" })).toHaveAttribute("aria-valuenow", "180");
     expect(within(today).getByLabelText("From a calendar event")).toBeInTheDocument();
+    expect(within(today).getByLabelText("From an email")).toBeInTheDocument();
   });
 
   it("asks Claude for tasks from the calendar", async () => {

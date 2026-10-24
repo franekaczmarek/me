@@ -247,3 +247,121 @@ def test_latest_digest(api: TestClient, fake_db: FakeSupabase) -> None:
 def test_digest_needs_claude(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings(), "anthropic_api_key", "")
     assert api.post("/mail/digest", json={}).status_code == 503
+
+
+# --- apply -----------------------------------------------------------------------------
+
+P1 = "b0000000-0000-0000-0000-000000000001"
+P2 = "b0000000-0000-0000-0000-000000000002"
+M1 = "f0000000-0000-0000-0000-000000000001"
+M2 = "f0000000-0000-0000-0000-000000000002"
+M3 = "f0000000-0000-0000-0000-000000000003"
+
+
+def proposal(id_: str, title: str, mail_ids: list[str], status: str = "pending") -> dict:
+    return {
+        "id": id_,
+        "title": title,
+        "planned_date": "2026-10-26",
+        "deadline": "2026-10-30",
+        "duration_min": 10,
+        "priority": "normal",
+        "reason": "Due Friday",
+        "mail_ids": mail_ids,
+        "status": status,
+    }
+
+
+def stored(id_: str, account_id: str, uid: int, subject: str, *, uidvalidity: int = 77, marked_read: bool = False) -> dict:
+    return {"id": id_, "account_id": account_id, "uidvalidity": uidvalidity, "uid": uid, "subject": subject, "sender": "Ann <ann@example.com>", "marked_read": marked_read}
+
+
+def digest_row(*proposals: dict) -> dict:
+    return {**DIGEST_ROW, "proposals": list(proposals)}
+
+
+ACCEPT = {"proposal_id": P1, "title": " Pay the invoice now ", "planned_date": "2026-10-25", "deadline": "2026-10-30", "duration_min": 15, "priority": "high"}
+
+
+def test_apply_creates_tasks_and_remembers_choices(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail) -> None:
+    fake_db.reply(200, [digest_row(proposal(P1, "Pay the invoice", [M1]), proposal(P2, "Read the newsletter", [M2]))])
+    fake_db.reply(200, [stored(M1, PRIVATE_ID, 9, "Invoice"), stored(M2, PRIVATE_ID, 12, "")])
+    response = api.post(f"/mail/digest/{DIGEST_ID}/apply", json={"today": "2026-10-24", "accepted": [ACCEPT], "dismissed": [P2]})
+    assert response.json() == {"created": 1, "dismissed": 1, "marked": 0, "warnings": []}
+
+    task = json.loads(next(r for r in fake_db.requests if r.method == "POST").content)
+    assert task == {
+        "title": "Pay the invoice now",
+        "notes": "From email: Invoice (Ann <ann@example.com>)\nDue Friday",
+        "planned_date": "2026-10-25",
+        "deadline": "2026-10-30",
+        "duration_min": 15,
+        "priority": "high",
+        "source_mail_id": M1,
+    }
+    patch = json.loads(fake_db.last.content)
+    assert [p["status"] for p in patch["proposals"]] == ["accepted", "dismissed"]
+    assert patch["applied_at"]
+    assert gmail.marked == []
+
+
+def test_apply_marks_the_digest_emails_as_read_per_inbox(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail) -> None:
+    gmail.add("me@gmail.com", uidvalidity=77)
+    gmail.add("work@firm.pl", uidvalidity=5)
+    gmail.errors["third@gmail.com"] = MailConnectionError()
+    third = "a0000000-0000-0000-0000-000000000003"
+    fake_db.reply(200, [digest_row(proposal(P1, "Pay the invoice", [M1]))])
+    fake_db.reply(
+        200,
+        [
+            stored(M1, PRIVATE_ID, 9, "Invoice"),
+            stored(M2, PRIVATE_ID, 12, "Sale"),
+            stored(M3, WORK_ID, 4, "Old numbering", uidvalidity=4),
+            stored("f0000000-0000-0000-0000-000000000004", PRIVATE_ID, 2, "Read before", marked_read=True),
+            stored("f0000000-0000-0000-0000-000000000005", third, 3, "Elsewhere"),
+        ],
+    )
+    fake_db.reply(204)  # digest update
+    fake_db.reply(200, [account(PRIVATE_ID, "me@gmail.com", "Private"), account(WORK_ID, "work@firm.pl", "Work"), account(third, "third@gmail.com")])
+    response = api.post(f"/mail/digest/{DIGEST_ID}/apply", json={"today": "2026-10-24", "dismissed": [P1], "mark_read": True})
+    assert response.json() == {
+        "created": 0,
+        "dismissed": 1,
+        "marked": 2,
+        "warnings": [
+            "Work changed since the summary; mark those emails as read in Gmail.",
+            "Couldn't reach Gmail for third@gmail.com; its emails stay unread.",
+        ],
+    }
+    assert gmail.marked == [("me@gmail.com", 77, [9, 12])]
+    marked = fake_db.last
+    assert marked.method == "PATCH" and marked.url.params["id"] == f"in.({M1},{M2})"
+    assert json.loads(marked.content) == {"marked_read": True}
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        ({"accepted": [ACCEPT], "dismissed": [P1]}, 422),
+        ({"accepted": [{**ACCEPT, "planned_date": "2026-10-23"}]}, 422),
+        ({"dismissed": [P2]}, 409),
+        ({"dismissed": ["b0000000-0000-0000-0000-00000000000f"]}, 409),
+    ],
+)
+def test_apply_rejects_bad_choices(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail, body: dict, code: int) -> None:
+    fake_db.reply(200, [digest_row(proposal(P1, "Pay", [M1]), proposal(P2, "Done before", [M1], status="accepted"))])
+    response = api.post(f"/mail/digest/{DIGEST_ID}/apply", json={"today": "2026-10-24", **body})
+    assert response.status_code == code
+    assert all(r.method == "GET" for r in fake_db.requests)
+
+
+def test_apply_to_an_unknown_digest(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail) -> None:
+    assert api.post(f"/mail/digest/{DIGEST_ID}/apply", json={}).status_code == 404
+
+
+def test_apply_drops_a_deadline_before_the_planned_day(api: TestClient, fake_db: FakeSupabase, gmail: FakeGmail) -> None:
+    fake_db.reply(200, [digest_row(proposal(P1, "Pay", [M1]))])
+    fake_db.reply(200, [])  # the email's inbox was disconnected meanwhile
+    api.post(f"/mail/digest/{DIGEST_ID}/apply", json={"today": "2026-10-24", "accepted": [{**ACCEPT, "planned_date": "2026-11-02"}]})
+    task = json.loads(next(r for r in fake_db.requests if r.method == "POST").content)
+    assert (task["deadline"], task["source_mail_id"], task["notes"]) == (None, None, "Due Friday")

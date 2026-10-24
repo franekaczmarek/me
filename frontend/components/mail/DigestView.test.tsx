@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Digest } from "@/lib/mail/types";
 import { DigestView } from "./DigestView";
 
-const mailApi = vi.hoisted(() => ({ digest: vi.fn(), latestDigest: vi.fn() }));
+const mailApi = vi.hoisted(() => ({ digest: vi.fn(), latestDigest: vi.fn(), applyDigest: vi.fn() }));
 vi.mock("@/lib/mail/api", () => ({ mailApi }));
+vi.mock("@/lib/todo/api", () => ({ localToday: () => "2026-10-24" }));
 
 const PRIVATE = { id: "a1", email: "me@gmail.com", label: "Private", color: "#ff7a6b", created_at: "2026-10-24T10:00:00Z" };
 const message = (id: string, subject: string, importance: "low" | "normal" | "high", category = "primary") => ({
@@ -43,7 +44,11 @@ const DIGEST: Digest = {
 beforeEach(() => {
   mailApi.latestDigest.mockResolvedValue(null);
   mailApi.digest.mockResolvedValue({ digest: DIGEST, warnings: [] });
+  mailApi.applyDigest.mockResolvedValue({ created: 1, dismissed: 1, marked: 2, warnings: [] });
 });
+
+const NEWSLETTER = { ...DIGEST.proposals[0], id: "p2", title: "Read the newsletter", deadline: null, priority: "low" as const, mail_ids: ["m1"] };
+const tasksCard = () => screen.getByRole("region", { name: "Tasks from your mail" });
 
 /** The button, once the last digest has loaded (it stays disabled until then). */
 async function summarizeButton() {
@@ -66,7 +71,8 @@ describe("DigestView", () => {
     expect(screen.getByText(/Summary of 2 emails/)).toBeInTheDocument();
 
     const task = within(screen.getByRole("region", { name: "Tasks from your mail" })).getByRole("listitem", { name: "Pay the invoice" });
-    expect(task).toHaveTextContent("Mon 26 Oct");
+    expect(within(task).getByLabelText("Day for Pay the invoice")).toHaveValue("2026-10-26");
+    expect(within(task).getByRole("checkbox", { name: "Add Pay the invoice" })).toBeChecked();
     expect(task).toHaveTextContent("due Fri 30 Oct");
     expect(task).toHaveTextContent("~10m");
     expect(task).toHaveTextContent("From: Invoice");
@@ -124,5 +130,82 @@ describe("DigestView", () => {
     finishLoad(null);
     await userEvent.click(await summarizeButton());
     expect(await screen.findByText("An invoice to pay and a sale.")).toBeInTheDocument();
+  });
+
+  it("adds the ticked tasks as edited, dismisses the rest and marks the emails as read", async () => {
+    const applied: Digest = {
+      ...DIGEST,
+      applied_at: "2026-10-24T18:00:00Z",
+      proposals: [{ ...DIGEST.proposals[0], status: "accepted" }, { ...NEWSLETTER, status: "dismissed" }],
+      messages: DIGEST.messages.map((m) => ({ ...m, marked_read: true })),
+    };
+    mailApi.latestDigest.mockResolvedValueOnce({ ...DIGEST, proposals: [DIGEST.proposals[0], NEWSLETTER] }).mockResolvedValueOnce(applied);
+    render(<DigestView accounts={[PRIVATE]} />);
+    const card = await screen.findByRole("region", { name: "Tasks from your mail" });
+    const invoice = within(card).getByRole("listitem", { name: "Pay the invoice" });
+    const title = within(invoice).getByLabelText("Task title");
+    await userEvent.clear(title);
+    await userEvent.type(title, "Pay invoice 10/2026");
+    const day = within(invoice).getByLabelText("Day for Pay the invoice");
+    await userEvent.clear(day);
+    await userEvent.type(day, "2026-10-27");
+    await userEvent.click(within(card).getByRole("checkbox", { name: "Add Read the newsletter" }));
+    expect(within(card).getByRole("checkbox", { name: "Mark these 2 emails as read in Gmail" })).toBeChecked();
+
+    await userEvent.click(within(card).getByRole("button", { name: "Add 1 task" }));
+    expect(mailApi.applyDigest).toHaveBeenCalledWith(
+      "d1",
+      [{ proposal_id: "p1", title: "Pay invoice 10/2026", planned_date: "2026-10-27", deadline: "2026-10-30", duration_min: 10, priority: "normal" }],
+      ["p2"],
+      true,
+    );
+    expect(await screen.findByText("Added 1 task to your to-do list. Marked 2 emails as read.")).toBeInTheDocument();
+    expect(within(tasksCard()).getByText("✓ Added")).toBeInTheDocument();
+    expect(within(tasksCard()).getByText("Skipped")).toBeInTheDocument();
+    expect(within(tasksCard()).queryByRole("button", { name: /Add|Mark|Done/ })).not.toBeInTheDocument();
+  });
+
+  it("can leave the emails unread and mark them later", async () => {
+    mailApi.latestDigest
+      .mockResolvedValueOnce(DIGEST)
+      .mockResolvedValueOnce({ ...DIGEST, proposals: [{ ...DIGEST.proposals[0], status: "accepted" }] });
+    mailApi.applyDigest.mockResolvedValueOnce({ created: 1, dismissed: 0, marked: 0, warnings: ["Couldn't reach Gmail for Work; its emails stay unread."] });
+    render(<DigestView accounts={[PRIVATE]} />);
+    const card = await screen.findByRole("region", { name: "Tasks from your mail" });
+    await userEvent.click(within(card).getByRole("checkbox", { name: "Mark these 2 emails as read in Gmail" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Add 1 task" }));
+    expect(mailApi.applyDigest).toHaveBeenLastCalledWith("d1", expect.any(Array), [], false);
+    expect(await screen.findByText("Couldn't reach Gmail for Work; its emails stay unread.")).toBeInTheDocument();
+
+    // Nothing left to add: the button only marks the emails as read.
+    await userEvent.click(within(tasksCard()).getByRole("checkbox", { name: "Mark these 2 emails as read in Gmail" }));
+    await userEvent.click(within(tasksCard()).getByRole("button", { name: "Mark as read" }));
+    expect(mailApi.applyDigest).toHaveBeenLastCalledWith("d1", [], [], true);
+  });
+
+  it("checks titles and days before adding", async () => {
+    mailApi.latestDigest.mockResolvedValueOnce(DIGEST);
+    render(<DigestView accounts={[PRIVATE]} />);
+    const card = await screen.findByRole("region", { name: "Tasks from your mail" });
+    await userEvent.clear(within(card).getByLabelText("Task title"));
+    await userEvent.click(within(card).getByRole("button", { name: "Add 1 task" }));
+    expect(within(card).getByText("Give every ticked task a title.")).toBeInTheDocument();
+    await userEvent.type(within(card).getByLabelText("Task title"), "Pay");
+    const day = within(card).getByLabelText("Day for Pay the invoice");
+    await userEvent.clear(day);
+    await userEvent.type(day, "2026-10-01");
+    await userEvent.click(within(card).getByRole("button", { name: "Add 1 task" }));
+    expect(within(card).getByText("Tasks can't be planned in the past.")).toBeInTheDocument();
+    expect(mailApi.applyDigest).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed apply and lets the user retry", async () => {
+    mailApi.latestDigest.mockResolvedValueOnce(DIGEST);
+    mailApi.applyDigest.mockRejectedValueOnce(new Error("Some of these tasks were already handled."));
+    render(<DigestView accounts={[PRIVATE]} />);
+    const card = await screen.findByRole("region", { name: "Tasks from your mail" });
+    await userEvent.click(within(card).getByRole("button", { name: "Add 1 task" }));
+    expect(await within(card).findByText("Some of these tasks were already handled.")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Add 1 task" })).toBeEnabled();
   });
 });

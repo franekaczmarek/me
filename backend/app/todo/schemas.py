@@ -15,7 +15,7 @@ Duration = Annotated[int, Field(ge=1, le=1440, description="Estimated minutes")]
 TASK_COLUMNS = (
     "id,title,notes,planned_date,deadline,duration_min,priority,fixed_day,status,completed_at,"
     "first_planned_date,postponed_count,routine_id,occurrence_date,position,created_at,"
-    "source_event_id,source_occurrence_date"
+    "source_event_id,source_occurrence_date,source_mail_id"
 )
 
 
@@ -75,6 +75,7 @@ class Task(BaseModel):
     #: Created for this calendar event occurrence ("Buy a present" before a birthday).
     source_event_id: UUID | None = None
     source_occurrence_date: date | None = None
+    source_mail_id: UUID | None = None
 
 
 class EventChip(BaseModel):

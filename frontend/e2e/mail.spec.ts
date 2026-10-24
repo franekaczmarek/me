@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiClient, logIn, requireTestUser } from "./helpers";
+import { apiClient, logIn, requireTestUser, supabaseRest } from "./helpers";
 
 test.beforeEach(() => requireTestUser());
 
@@ -101,4 +101,56 @@ test("a user summarizes new mail and reads the summary, proposed tasks and email
   await page.getByRole("button", { name: "✨ Summarize new mail" }).click();
   await expect(page.getByText("No new unread mail since the last summary.")).toBeVisible();
   await expect(page.getByText("E2E: an invoice to pay and one newsletter.")).toBeVisible();
+});
+
+test("a user adds a task from a mail summary and finds it in the to-do list", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const db = await supabaseRest(page, request);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const now = new Date();
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  // A digest as Claude would leave it (Gmail and Claude can't run in tests); adding the task is real.
+  const account = await db.insert("mail_accounts", { email: "e2e-apply@gmail.com", label: "E2E inbox", password_enc: "not-a-real-token" });
+  const digest = await db.insert("mail_digests", { summary: "E2E: an invoice to pay." });
+  const mail = await db.insert("mail_messages", {
+    account_id: account.id,
+    digest_id: digest.id,
+    uidvalidity: 1,
+    uid: 1,
+    message_id: "<e2e-invoice@example.com>",
+    sender: "Billing <billing@example.com>",
+    subject: "E2E invoice 10/2026",
+    summary: "Invoice for 120 PLN",
+    importance: "high",
+  });
+  const proposal = { id: crypto.randomUUID(), title: "E2E pay the invoice", planned_date: today, deadline: null, duration_min: 10, priority: "high", reason: "Due soon", mail_ids: [mail.id], status: "pending" };
+  await db.update("mail_digests", digest.id, { proposals: [proposal] });
+  let taskId: string | undefined;
+  try {
+    await page.getByRole("link", { name: "Mail" }).click();
+    const card = page.getByRole("region", { name: "Tasks from your mail" });
+    const row = card.getByRole("listitem", { name: "E2E pay the invoice" });
+    await row.getByLabel("Task title").fill("E2E pay invoice 10/2026");
+    // The stored app password is fake, so the emails stay unread in this test.
+    await card.getByRole("checkbox", { name: "Mark this email as read in Gmail" }).uncheck();
+    await card.getByRole("button", { name: "Add 1 task" }).click();
+    await expect(page.getByText("Added 1 task to your to-do list.")).toBeVisible();
+    await expect(row.getByText("✓ Added")).toBeVisible();
+
+    const tasks: { id: string; title: string; source_mail_id: string; notes: string }[] = await (await api.get(`/todo/tasks?start=${today}&end=${today}`)).json();
+    const task = tasks.find((t) => t.title === "E2E pay invoice 10/2026")!;
+    taskId = task.id;
+    expect(task.source_mail_id).toBe(mail.id);
+    expect(task.notes).toContain("From email: E2E invoice 10/2026");
+
+    await page.getByRole("link", { name: "To-do" }).click();
+    const todayCard = page.getByRole("region", { name: /^Today/ });
+    await expect(todayCard.getByText("E2E pay invoice 10/2026")).toBeVisible();
+    await expect(todayCard.getByLabel("From an email")).toBeVisible();
+  } finally {
+    if (taskId) await api.delete(`/todo/tasks/${taskId}`);
+    await db.delete("mail_digests", digest.id);
+    await db.delete("mail_accounts", account.id);
+  }
 });

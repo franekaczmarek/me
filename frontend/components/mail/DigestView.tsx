@@ -5,7 +5,8 @@ import { Message } from "@/components/ui";
 import { shortDay } from "@/lib/calendar/format";
 import { withAlpha } from "@/lib/colors";
 import { mailApi } from "@/lib/mail/api";
-import type { Digest, Importance, MailAccount, MailCategory, MailMessage, MailProposal } from "@/lib/mail/types";
+import type { ApplyResult, Digest, Importance, MailAccount, MailCategory, MailMessage } from "@/lib/mail/types";
+import { localToday } from "@/lib/todo/api";
 import { formatMinutes } from "@/lib/todo/format";
 
 const card =
@@ -68,6 +69,22 @@ export function DigestView({ accounts }: { accounts: MailAccount[] | null }) {
     }
   }
 
+  /** After tasks were added: say what happened and reload the digest from the server. */
+  async function applied(result: ApplyResult) {
+    const parts = [
+      result.created && `Added ${result.created} task${result.created === 1 ? "" : "s"} to your to-do list.`,
+      result.marked && `Marked ${result.marked} email${result.marked === 1 ? "" : "s"} as read.`,
+    ].filter(Boolean);
+    setNotice(parts.join(" ") || "Done.");
+    setWarnings(result.warnings);
+    setError(null);
+    try {
+      setDigest(await mailApi.latestDigest());
+    } catch (e) {
+      setLoadError(`Could not reload the summary: ${(e as Error).message}`);
+    }
+  }
+
   const noInboxes = accounts?.length === 0;
 
   return (
@@ -107,12 +124,20 @@ export function DigestView({ accounts }: { accounts: MailAccount[] | null }) {
         )}
       </section>
 
-      {digest && <DigestDetails digest={digest} accounts={accounts ?? []} />}
+      {digest && <DigestDetails key={digest.id} digest={digest} accounts={accounts ?? []} onApplied={applied} />}
     </div>
   );
 }
 
-function DigestDetails({ digest, accounts }: { digest: Digest; accounts: MailAccount[] }) {
+function DigestDetails({
+  digest,
+  accounts,
+  onApplied,
+}: {
+  digest: Digest;
+  accounts: MailAccount[];
+  onApplied: (result: ApplyResult) => Promise<void>;
+}) {
   const byId = new Map(digest.messages.map((m) => [m.id, m]));
   return (
     <>
@@ -122,40 +147,171 @@ function DigestDetails({ digest, accounts }: { digest: Digest; accounts: MailAcc
         </p>
         <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed text-stone-700 dark:text-zinc-200">{digest.summary}</p>
       </section>
-      <ProposalsCard proposals={digest.proposals} messages={byId} />
+      <ProposalsCard digest={digest} messages={byId} onApplied={onApplied} />
       <EmailsCard messages={digest.messages} accounts={accounts} />
     </>
   );
 }
 
-function ProposalsCard({ proposals, messages }: { proposals: MailProposal[]; messages: Map<string, MailMessage> }) {
+type Choice = { checked: boolean; title: string; planned_date: string };
+
+/** Proposed tasks: tick, edit and add them; the unticked ones are dismissed. Can mark the emails as read too. */
+function ProposalsCard({
+  digest,
+  messages,
+  onApplied,
+}: {
+  digest: Digest;
+  messages: Map<string, MailMessage>;
+  onApplied: (result: ApplyResult) => Promise<void>;
+}) {
+  const today = localToday();
+  const pending = digest.proposals.filter((p) => p.status === "pending");
+  const unread = digest.messages.filter((m) => !m.marked_read).length;
+  const [choices, setChoices] = useState<Record<string, Choice>>(() =>
+    Object.fromEntries(
+      pending.map((p) => [p.id, { checked: true, title: p.title, planned_date: p.planned_date < today ? today : p.planned_date }]),
+    ),
+  );
+  const [markRead, setMarkRead] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const change = (id: string, patch: Partial<Choice>) => setChoices((c) => ({ ...c, [id]: { ...c[id], ...patch } }));
+  const accepted = pending.filter((p) => choices[p.id]?.checked);
+  const willMark = markRead && unread > 0;
+
+  async function apply() {
+    if (accepted.some((p) => !choices[p.id].title.trim())) return setError("Give every ticked task a title.");
+    if (accepted.some((p) => !choices[p.id].planned_date || choices[p.id].planned_date < today)) {
+      return setError("Tasks can't be planned in the past.");
+    }
+    setApplying(true);
+    setError(null);
+    try {
+      const result = await mailApi.applyDigest(
+        digest.id,
+        accepted.map((p) => ({
+          proposal_id: p.id,
+          title: choices[p.id].title.trim(),
+          planned_date: choices[p.id].planned_date,
+          deadline: p.deadline,
+          duration_min: p.duration_min,
+          priority: p.priority,
+        })),
+        pending.filter((p) => !choices[p.id]?.checked).map((p) => p.id),
+        willMark,
+      );
+      await onApplied(result);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  const label = accepted.length
+    ? `Add ${accepted.length} task${accepted.length === 1 ? "" : "s"}`
+    : willMark
+      ? "Mark as read"
+      : "Done";
+
   return (
     <section aria-label="Tasks from your mail" className={card}>
       <h2 className="text-lg font-semibold text-stone-800 dark:text-zinc-100">Tasks from your mail</h2>
-      {proposals.length === 0 ? (
+      {digest.proposals.length === 0 ? (
         <p className="mt-1 text-sm text-stone-500">Nothing to do from these emails.</p>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
-          {proposals.map((p) => (
-            <li key={p.id} aria-label={p.title} className="rounded-2xl bg-stone-50 px-4 py-3 dark:bg-zinc-800/50">
-              <div className="flex items-start gap-3">
-                <span aria-hidden className="mt-1.5 size-2.5 shrink-0 rounded-full" style={{ background: IMPORTANCE[p.priority].color }} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-stone-800 dark:text-zinc-100">{p.title}</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
-                    <Chip color="#56a8f5">{shortDay(p.planned_date)}</Chip>
-                    {p.deadline && <Chip color="#ff7a6b">due {shortDay(p.deadline)}</Chip>}
-                    {p.duration_min && <span>~{formatMinutes(p.duration_min)}</span>}
-                    {p.reason && <span>· {p.reason}</span>}
+          {digest.proposals.map((p) => {
+            const choice = choices[p.id];
+            const open = p.status === "pending" && choice;
+            return (
+              <li
+                key={p.id}
+                aria-label={p.title}
+                className={`rounded-2xl px-4 py-3 ${open ? "bg-stone-50 dark:bg-zinc-800/50" : "bg-stone-50/50 dark:bg-zinc-800/20"}`}
+              >
+                <div className="flex items-start gap-3">
+                  {open ? (
+                    <input
+                      type="checkbox"
+                      aria-label={`Add ${p.title}`}
+                      className="mt-1.5 accent-[#ff7a6b]"
+                      checked={choice.checked}
+                      disabled={applying}
+                      onChange={(e) => change(p.id, { checked: e.target.checked })}
+                    />
+                  ) : (
+                    <span aria-hidden className="mt-1.5 size-2.5 shrink-0 rounded-full" style={{ background: IMPORTANCE[p.priority].color }} />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    {open ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          aria-label="Task title"
+                          value={choice.title}
+                          maxLength={200}
+                          disabled={!choice.checked || applying}
+                          onChange={(e) => change(p.id, { title: e.target.value })}
+                          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-1.5 py-0.5 text-sm font-medium text-stone-800 outline-none hover:border-stone-200 focus:border-stone-300 disabled:text-stone-400 disabled:line-through dark:text-zinc-100 dark:hover:border-zinc-700"
+                        />
+                        <input
+                          type="date"
+                          aria-label={`Day for ${p.title}`}
+                          value={choice.planned_date}
+                          min={today}
+                          disabled={!choice.checked || applying}
+                          onChange={(e) => change(p.id, { planned_date: e.target.value })}
+                          className="rounded-lg border border-stone-200 bg-white px-2 py-0.5 text-xs text-stone-600 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                        />
+                      </div>
+                    ) : (
+                      <p className={`text-sm font-medium ${p.status === "dismissed" ? "text-stone-400 line-through" : "text-stone-800 dark:text-zinc-100"}`}>
+                        {p.title}
+                      </p>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 px-1.5 text-xs text-stone-500">
+                      {p.status === "accepted" && <Chip color="#4cc9a0">✓ Added</Chip>}
+                      {p.status === "dismissed" && <Chip color="#a8a29e">Skipped</Chip>}
+                      {!open && <Chip color="#56a8f5">{shortDay(p.planned_date)}</Chip>}
+                      {p.deadline && <Chip color="#ff7a6b">due {shortDay(p.deadline)}</Chip>}
+                      {p.priority === "high" && <span>important</span>}
+                      {p.duration_min && <span>~{formatMinutes(p.duration_min)}</span>}
+                      {p.reason && <span>· {p.reason}</span>}
+                    </div>
+                    <p className="mt-1 truncate px-1.5 text-xs text-stone-400">
+                      From: {p.mail_ids.map((id) => messages.get(id)?.subject || "(no subject)").join(", ")}
+                    </p>
                   </div>
-                  <p className="mt-1 truncate text-xs text-stone-400">
-                    From: {p.mail_ids.map((id) => messages.get(id)?.subject || "(no subject)").join(", ")}
-                  </p>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
+      )}
+      {(pending.length > 0 || unread > 0) && (
+        <div className="mt-4 flex flex-col gap-3">
+          {error && <Message kind="error">{error}</Message>}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {unread > 0 ? (
+              <label className="flex items-center gap-2 text-sm text-stone-600 dark:text-zinc-300">
+                <input type="checkbox" className="accent-[#ff7a6b]" checked={markRead} disabled={applying} onChange={(e) => setMarkRead(e.target.checked)} />
+                Mark {unread === 1 ? "this email" : `these ${unread} emails`} as read in Gmail
+              </label>
+            ) : (
+              <span />
+            )}
+            <button
+              type="button"
+              onClick={apply}
+              disabled={applying || (!pending.length && !willMark)}
+              className={primaryButton}
+            >
+              {applying ? "Saving…" : label}
+            </button>
+          </div>
+        </div>
       )}
     </section>
   );

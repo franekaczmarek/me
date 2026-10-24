@@ -25,6 +25,8 @@ export type Task = {
   /** Created for this calendar event occurrence. */
   source_event_id?: string | null;
   source_occurrence_date?: string | null;
+  /** Created from this email (Mail tab digest). */
+  source_mail_id?: string | null;
 };
 
 /** A calendar event shown on a day of the to-do list. */

@@ -121,3 +121,27 @@ def test_digest_is_saved_once_per_email(api: TestClient, supa: Supa, gmail: Fake
     assert again == {"digest": None, "warnings": []}
     assert len(claude.calls) == 1
     assert api.get("/mail/digest/latest").json()["id"] == digest["id"]
+    proposal = digest["proposals"][0]
+
+    applied = api.post(
+        f"/mail/digest/{digest['id']}/apply",
+        json={
+            "today": "2026-10-24",
+            "accepted": [{"proposal_id": proposal["id"], "title": "Pay the invoice", "planned_date": "2026-10-25", "priority": "high"}],
+            "mark_read": True,
+        },
+    )
+    assert applied.json() == {"created": 1, "dismissed": 0, "marked": 2, "warnings": []}
+    assert gmail.marked == [("me@gmail.com", 77, [9, 12])]
+
+    task = supa.rest("GET", "todo_tasks", params={"source_mail_id": f"eq.{invoice['id']}"}).json()[0]
+    assert (task["title"], task["planned_date"], task["priority"]) == ("Pay the invoice", "2026-10-25", "high")
+    assert task["notes"].startswith("From email: Invoice")
+    assert api.get("/todo/tasks?start=2026-10-25&end=2026-10-25").json()[0]["source_mail_id"] == invoice["id"]
+
+    latest = api.get("/mail/digest/latest").json()
+    assert latest["applied_at"] and latest["proposals"][0]["status"] == "accepted"
+    assert all(m["marked_read"] for m in latest["messages"])
+    # Handled proposals can't be applied twice.
+    again = api.post(f"/mail/digest/{digest['id']}/apply", json={"dismissed": [proposal["id"]]})
+    assert again.status_code == 409

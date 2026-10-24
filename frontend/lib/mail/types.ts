@@ -53,3 +53,8 @@ export type Digest = {
 
 /** `digest` is null when there was no new unread mail. */
 export type DigestResult = { digest: Digest | null; warnings: string[] };
+
+/** A proposal the user accepted, with their edits. */
+export type AcceptedTask = Pick<MailProposal, "title" | "planned_date" | "deadline" | "duration_min" | "priority"> & { proposal_id: string };
+
+export type ApplyResult = { created: number; dismissed: number; marked: number; warnings: string[] };

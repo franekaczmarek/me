@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 
 // Test-account credentials (E2E_EMAIL, E2E_PASSWORD) live in the git-ignored .env.e2e.
 if (existsSync(".env.e2e")) process.loadEnvFile(".env.e2e");
+// Supabase URL + publishable key, for seeding rows the UI can't create in tests (see `supabaseRest`).
+if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 
 // E2E tests run the real stack: Next.js + FastAPI + the Supabase project.
 // Already-running dev servers are reused.

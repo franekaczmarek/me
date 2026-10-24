@@ -1,7 +1,7 @@
 // Backend calls for the Mail module: connected Gmail inboxes and Claude's digests of unread mail.
 import { api } from "@/lib/api";
 import { localToday } from "@/lib/todo/api";
-import type { Digest, DigestResult, MailAccount, MailAccountInput, MailAccountPatch } from "./types";
+import type { AcceptedTask, ApplyResult, Digest, DigestResult, MailAccount, MailAccountInput, MailAccountPatch } from "./types";
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
@@ -15,4 +15,7 @@ export const mailApi = {
   /** Claude reads the new unread mail (nothing is marked as read) and saves a digest with proposed tasks. */
   digest: () => api<DigestResult>("/mail/digest", json("POST", { today: localToday() })),
   latestDigest: () => api<Digest | null>("/mail/digest/latest"),
+  /** Adds the accepted tasks (as edited), dismisses the others and can mark the digest's emails as read in Gmail. */
+  applyDigest: (id: string, accepted: AcceptedTask[], dismissed: string[], markRead: boolean) =>
+    api<ApplyResult>(`/mail/digest/${id}/apply`, json("POST", { today: localToday(), accepted, dismissed, mark_read: markRead })),
 };

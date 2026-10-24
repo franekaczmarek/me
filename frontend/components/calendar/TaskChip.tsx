@@ -48,6 +48,7 @@ export function TaskChip({ segment, rowOffset, onToggle, onOpen }: Props) {
         }`}
       >
         {task.source_event_id && <span className="mr-0.5">📅</span>}
+        {task.source_mail_id && <span className="mr-0.5">📧</span>}
         {task.title}
       </button>
     </div>

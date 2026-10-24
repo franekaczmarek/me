@@ -42,6 +42,25 @@ export async function apiClient(page: Page, request: APIRequestContext) {
   };
 }
 
+/** Supabase REST client as the logged-in user (RLS applies), for seeding rows the UI can't create in tests. */
+export async function supabaseRest(page: Page, request: APIRequestContext) {
+  const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1`;
+  const headers = {
+    apikey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
+    Authorization: `Bearer ${await accessToken(page)}`,
+    Prefer: "return=representation",
+  };
+  return {
+    insert: async (table: string, data: object) => {
+      const response = await request.post(`${url}/${table}`, { headers, data });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      return (await response.json())[0];
+    },
+    update: (table: string, id: string, data: object) => request.patch(`${url}/${table}?id=eq.${id}`, { headers, data }),
+    delete: (table: string, id: string) => request.delete(`${url}/${table}?id=eq.${id}`, { headers }),
+  };
+}
+
 /** 1x1 transparent PNG for upload tests. */
 export const PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",

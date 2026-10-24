@@ -72,6 +72,11 @@ export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Prop
             📅
           </span>
         )}
+        {task.source_mail_id && (
+          <span aria-label="From an email" title="Made from an email (see its notes)" className="mr-1.5">
+            📧
+          </span>
+        )}
         {task.title}
       </button>
 

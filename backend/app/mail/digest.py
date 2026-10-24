@@ -2,23 +2,24 @@
 
 `POST /mail/digest` reads Gmail without marking anything as read, skips emails summarized before, and saves
 the digest (summary, the emails it covered, proposed tasks). Nothing reaches the to-do list until the user
-accepts proposals; then the digest's emails can be marked as read in Gmail.
+accepts proposals (`/mail/digest/{id}/apply`); then the digest's emails can be marked as read in Gmail.
 """
 
 import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Any, Literal
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.calendar.suggest import title_key
 from app.core.claude import ClaudeDep, ask_structured
-from app.core.supabase import Supabase, SupabaseDep
+from app.core.supabase import Supabase, SupabaseDep, one_or_404
 from app.mail.crypto import Cipher, CipherDep
 from app.mail.imap import Gmail, GmailDep, MailConnectionError, MailLoginError
 from app.mail.parse import ParsedMail, parse_mail
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/mail", tags=["mail"])
 ACCOUNTS = "mail_accounts"
 DIGESTS = "mail_digests"
 MESSAGES = "mail_messages"
+TASKS = "todo_tasks"
 DIGEST_COLUMNS = "id,summary,proposals,created_at,applied_at"
 MESSAGE_COLUMNS = "id,account_id,sender,subject,received_at,category,summary,importance,marked_read"
 #: Newest unread emails read per inbox, and in total per digest.
@@ -98,6 +100,7 @@ SCHEMA: dict[str, Any] = {
 }
 
 Priority = Literal["low", "normal", "high"]
+Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class DigestRequest(BaseModel):
@@ -393,3 +396,154 @@ def make_digest(body: DigestRequest, db: SupabaseDep, cipher: CipherDep, gmail: 
 def latest_digest(db: SupabaseDep) -> Digest | None:
     rows = db.rest("GET", DIGESTS, params={"select": DIGEST_COLUMNS, "order": "created_at.desc", "limit": "1"})
     return load_digest(db, rows[0]) if rows else None
+
+
+class AcceptedTask(BaseModel):
+    """A proposal the user accepted, as they edited it."""
+
+    proposal_id: UUID
+    title: Title
+    planned_date: date
+    deadline: date | None = None
+    duration_min: Annotated[int, Field(ge=1, le=1440)] | None = None
+    priority: Priority = "normal"
+
+
+class ApplyRequest(BaseModel):
+    today: date | None = None
+    accepted: list[AcceptedTask] = Field(default_factory=list, max_length=MAX_TASKS)
+    dismissed: list[UUID] = Field(default_factory=list, max_length=MAX_TASKS)
+    #: Mark the digest's emails as read in Gmail.
+    mark_read: bool = False
+
+
+class ApplyResult(BaseModel):
+    created: int
+    dismissed: int
+    #: Emails marked as read in Gmail.
+    marked: int
+    warnings: list[str]
+
+
+def _task_notes(proposal: dict[str, Any], messages: dict[str, dict[str, Any]]) -> str:
+    """Where the task came from: the emails' subjects and senders, then Claude's reason."""
+    lines = [
+        f"From email: {m['subject'] or '(no subject)'}" + (f" ({m['sender']})" if m["sender"] else "")
+        for mail_id in proposal["mail_ids"]
+        if (m := messages.get(mail_id))
+    ]
+    if proposal.get("reason"):
+        lines.append(proposal["reason"])
+    return "\n".join(lines)[:5000]
+
+
+def mark_digest_read(db: Supabase, gmail: Gmail, cipher: Cipher, messages: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    """Marks the given (still unread) emails as read in Gmail, inbox by inbox; one failing inbox doesn't stop the rest."""
+    by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for m in messages:
+        if not m["marked_read"]:
+            by_account[m["account_id"]].append(m)
+    if not by_account:
+        return 0, []
+    accounts = {
+        a["id"]: a
+        for a in db.rest(
+            "GET",
+            ACCOUNTS,
+            params={"select": "id,email,label,password_enc", "id": f"in.({','.join(by_account)})"},
+        )
+    }
+    marked = 0
+    warnings: list[str] = []
+    for account_id, mails in by_account.items():
+        account = accounts.get(account_id)
+        if account is None:
+            continue  # the inbox was disconnected
+        name = account["label"] or account["email"]
+        password = cipher.decrypt(account["password_enc"])
+        if password is None:
+            warnings.append(f"Set a new app password for {name} to mark its emails as read.")
+            continue
+        done: list[str] = []
+        for uidvalidity in sorted({m["uidvalidity"] for m in mails}):
+            batch = [m for m in mails if m["uidvalidity"] == uidvalidity]
+            try:
+                ok = gmail.mark_read(account["email"], password, uidvalidity, [m["uid"] for m in batch])
+            except MailLoginError:
+                warnings.append(f"Gmail rejected the login for {name}; its emails stay unread.")
+                break
+            except MailConnectionError:
+                warnings.append(f"Couldn't reach Gmail for {name}; its emails stay unread.")
+                break
+            if ok:
+                done += [m["id"] for m in batch]
+            else:
+                warnings.append(f"{name} changed since the summary; mark those emails as read in Gmail.")
+        if done:
+            db.rest(
+                "PATCH",
+                MESSAGES,
+                params={"id": f"in.({','.join(done)})"},
+                json={"marked_read": True},
+                prefer="return=minimal",
+            )
+            marked += len(done)
+    return marked, warnings
+
+
+@router.post("/digest/{digest_id}/apply", response_model=ApplyResult)
+def apply_digest(
+    digest_id: UUID, body: ApplyRequest, db: SupabaseDep, cipher: CipherDep, gmail: GmailDep
+) -> ApplyResult:
+    """Creates the accepted tasks (linked to their email), remembers dismissed proposals and can mark the
+    digest's emails as read."""
+    today = body.today or date.today()
+    row = one_or_404(
+        db.rest("GET", DIGESTS, params={"select": DIGEST_COLUMNS, "id": f"eq.{digest_id}"}), "Summary"
+    )
+    proposals = {p["id"]: p for p in row["proposals"]}
+    chosen = [str(a.proposal_id) for a in body.accepted] + [str(d) for d in body.dismissed]
+    if len(set(chosen)) != len(chosen):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A task was both added and dismissed.")
+    for proposal_id in chosen:
+        if proposals.get(proposal_id, {}).get("status") != "pending":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Some of these tasks were already handled.")
+    if any(a.planned_date < today for a in body.accepted):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Tasks can't be planned in the past.")
+
+    messages = db.rest(
+        "GET",
+        MESSAGES,
+        params={"select": "id,account_id,uidvalidity,uid,subject,sender,marked_read", "digest_id": f"eq.{digest_id}"},
+    )
+    by_id = {m["id"]: m for m in messages}
+    for a in body.accepted:
+        proposal = proposals[str(a.proposal_id)]
+        source = next((i for i in proposal["mail_ids"] if i in by_id), None)
+        db.rest(
+            "POST",
+            TASKS,
+            json={
+                "title": a.title,
+                "notes": _task_notes(proposal, by_id),
+                "planned_date": a.planned_date.isoformat(),
+                "deadline": a.deadline.isoformat() if a.deadline and a.deadline >= a.planned_date else None,
+                "duration_min": a.duration_min,
+                "priority": a.priority,
+                "source_mail_id": source,
+            },
+            prefer="return=minimal",
+        )
+        proposal["status"] = "accepted"
+    for d in body.dismissed:
+        proposals[str(d)]["status"] = "dismissed"
+    db.rest(
+        "PATCH",
+        DIGESTS,
+        params={"id": f"eq.{digest_id}"},
+        json={"proposals": row["proposals"], "applied_at": datetime.now(UTC).isoformat()},
+        prefer="return=minimal",
+    )
+
+    marked, warnings = mark_digest_read(db, gmail, cipher, messages) if body.mark_read else (0, [])
+    return ApplyResult(created=len(body.accepted), dismissed=len(body.dismissed), marked=marked, warnings=warnings)
