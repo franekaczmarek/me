@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkSettings } from "./WorkSettings";
@@ -32,6 +32,20 @@ beforeEach(() => {
 const scheduleCard = () => screen.getByRole("region", { name: "Work schedule" });
 
 describe("WorkSettings", () => {
+  it("keeps every day of quick clicks in a row", async () => {
+    render(<WorkSettings />);
+    const card = await screen.findByRole("region", { name: "Work schedule" });
+    const sat = await within(card).findByRole("button", { name: "Sat" });
+    const sun = within(card).getByRole("button", { name: "Sun" });
+    // Two clicks before React re-renders: the second must not undo the first.
+    act(() => {
+      sat.click();
+      sun.click();
+    });
+    expect(sat).toHaveAttribute("aria-pressed", "true");
+    expect(sun).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("edits and saves the work schedule", async () => {
     render(<WorkSettings />);
     const card = await screen.findByRole("region", { name: "Work schedule" });

@@ -43,16 +43,15 @@ function ScheduleCard() {
     );
   }
 
-  const set = (change: Partial<WorkSchedule>) => {
+  // Functional updates: quick clicks in a row must each see the previous one.
+  const set = (change: Partial<WorkSchedule> | ((s: WorkSchedule) => Partial<WorkSchedule>)) => {
     setInfo(null);
-    setSchedule({ ...schedule, ...change });
+    setSchedule((s) => s && { ...s, ...(typeof change === "function" ? change(s) : change) });
   };
   const toggleDay = (d: number) =>
-    set({
-      work_days: schedule.work_days.includes(d)
-        ? schedule.work_days.filter((x) => x !== d)
-        : [...schedule.work_days, d].sort(),
-    });
+    set((s) => ({
+      work_days: s.work_days.includes(d) ? s.work_days.filter((x) => x !== d) : [...s.work_days, d].sort(),
+    }));
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
