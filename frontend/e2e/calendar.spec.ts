@@ -162,6 +162,8 @@ test("calendar events show in the to-do list, and tasks can be dragged between c
     const chip = grid.getByRole("button", { name: "Task: E2E wine" });
     await expect(chip).toBeVisible();
     const target = grid.getByRole("gridcell", { name: longDay(tomorrow) });
+    // Late in the month the row can sit below the fold; the drop point must be on screen.
+    await target.scrollIntoViewIfNeeded();
     const from = (await chip.boundingBox())!;
     const to = (await target.boundingBox())!;
     await page.mouse.move(from.x + 10, from.y + from.height / 2);
