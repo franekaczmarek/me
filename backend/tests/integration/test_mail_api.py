@@ -7,7 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.mail.crypto import Cipher
-from tests.fake_gmail import MAIL_KEY, FakeGmail
+from app.mail.imap import RawMail
+from tests.fake_claude import FakeClaude
+from tests.fake_gmail import MAIL_KEY, FakeGmail, raw_mail
 from tests.integration.conftest import Supa
 
 CHECK_VIOLATION = "23514"
@@ -81,3 +83,41 @@ def test_api_saves_an_inbox_with_the_password_encrypted(api: TestClient, supa: S
     assert [a["email"] for a in api.get("/mail/accounts").json()] == ["me@gmail.com"]
     assert api.delete(f"/mail/accounts/{stored['id']}").status_code == 204
     assert api.get("/mail/accounts").json() == []
+
+
+def test_digest_is_saved_once_per_email(api: TestClient, supa: Supa, gmail: FakeGmail, claude: FakeClaude) -> None:
+    created = api.post("/mail/accounts", json={"email": "me@gmail.com", "app_password": "x", "label": "Private"})
+    assert created.status_code == 201, created.text
+    gmail.add(
+        "me@gmail.com",
+        RawMail(9, "primary", raw_mail("Invoice", "Pay 120 PLN by 30.10", message_id="<inv,(1)@x>")),
+        RawMail(12, "promotions", raw_mail("Sale")),
+        uidvalidity=77,
+    )
+    claude.reply(
+        {
+            "summary": "An invoice to pay.",
+            "emails": [{"ref": "m0", "summary": "Invoice, 120 PLN", "importance": "high"}],
+            "tasks": [
+                {"email_refs": ["m0"], "title": "Pay the invoice", "planned_in_days": 0, "deadline": None,
+                 "duration_min": 10, "priority": "high", "reason": "Due soon"}
+            ],
+        }
+    )
+    response = api.post("/mail/digest", json={"today": "2026-10-24"})
+    assert response.status_code == 200, response.text
+    digest = response.json()["digest"]
+    assert digest["summary"] == "An invoice to pay."
+    assert {m["subject"]: m["importance"] for m in digest["messages"]} == {"Invoice": "high", "Sale": "normal"}
+    [proposal] = digest["proposals"]
+    invoice = next(m for m in digest["messages"] if m["subject"] == "Invoice")
+    assert proposal["mail_ids"] == [invoice["id"]] and proposal["status"] == "pending"
+
+    stored = supa.rest("GET", "mail_messages", params={"digest_id": f"eq.{digest['id']}", "order": "uid"}).json()
+    assert [(m["uid"], m["uidvalidity"], m["category"]) for m in stored] == [(9, 77, "primary"), (12, 77, "promotions")]
+
+    # The same unread mail isn't summarized again (even with commas and parentheses in its Message-ID).
+    again = api.post("/mail/digest", json={"today": "2026-10-24"}).json()
+    assert again == {"digest": None, "warnings": []}
+    assert len(claude.calls) == 1
+    assert api.get("/mail/digest/latest").json()["id"] == digest["id"]

@@ -35,10 +35,15 @@ export function AccountsCard({ onChange }: { onChange?: (accounts: MailAccount[]
   }
 
   useEffect(() => {
+    // An answer that arrives after a remount (or a later reload) is stale.
+    let current = true;
     mailApi
       .accounts()
-      .then(show)
-      .catch((e: Error) => setError(`Could not load your inboxes: ${e.message}`));
+      .then((list) => current && show(list))
+      .catch((e: Error) => current && setError(`Could not load your inboxes: ${e.message}`));
+    return () => {
+      current = false;
+    };
   }, [show]);
 
   /** Runs a change, then reloads from the server; returns whether it worked. */
