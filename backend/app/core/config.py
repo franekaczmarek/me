@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Needed only for keys not scoped to a workspace (sent as the anthropic-workspace-id header).
     anthropic_workspace_id: str = ""
 
+    # Fernet key that encrypts the stored Gmail app passwords; the Mail module is unavailable without it.
+    mail_encryption_key: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

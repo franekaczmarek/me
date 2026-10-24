@@ -11,6 +11,7 @@ describe("AppNav", () => {
     expect(screen.getByRole("link", { name: "Timeline" })).toHaveAttribute("href", "/timeline");
     expect(screen.getByRole("link", { name: "To-do" })).toHaveAttribute("href", "/todo");
     expect(screen.getByRole("link", { name: "Calendar" })).toHaveAttribute("href", "/calendar");
+    expect(screen.getByRole("link", { name: "Mail" })).toHaveAttribute("href", "/mail");
   });
 
   it("highlights the tab of the current module, including nested paths", () => {

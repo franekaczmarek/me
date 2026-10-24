@@ -8,6 +8,7 @@ const TABS = [
   { href: "/timeline", label: "Timeline" },
   { href: "/todo", label: "To-do" },
   { href: "/calendar", label: "Calendar" },
+  { href: "/mail", label: "Mail" },
 ];
 
 export function AppNav() {

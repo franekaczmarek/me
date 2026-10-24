@@ -6,6 +6,7 @@ from app.calendar.quick_add import router as calendar_quick_add_router
 from app.calendar.router import router as calendar_router
 from app.calendar.suggest import router as calendar_suggest_router
 from app.calendar.summary import router as calendar_summary_router
+from app.mail.router import router as mail_router
 from app.routers import profile, users
 from app.timeline.media import router as timeline_media_router
 from app.timeline.router import router as timeline_router
@@ -38,6 +39,7 @@ app.include_router(calendar_router)
 app.include_router(calendar_summary_router)
 app.include_router(calendar_suggest_router)
 app.include_router(calendar_quick_add_router)
+app.include_router(mail_router)
 
 
 @app.get("/health")
