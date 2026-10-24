@@ -96,7 +96,7 @@ export function DigestView({ accounts }: { accounts: MailAccount[] | null }) {
             <p className="mt-1 text-sm text-stone-500">
               {noInboxes
                 ? "Connect a Gmail inbox to get a short summary of your unread mail and tasks to add from it."
-                : "Claude reads your unread mail from every Gmail tab, sums it up and proposes tasks. Nothing is marked as read."}
+                : "Claude reads your unread mail of the last 30 days from every Gmail tab and label, sums it up and proposes tasks. Nothing is marked as read."}
             </p>
           </div>
           <button type="button" onClick={run} disabled={running || !loaded || !accounts?.length} className={primaryButton}>
@@ -347,6 +347,11 @@ function EmailsCard({ messages, accounts }: { messages: MailMessage[]; accounts:
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
                         <p className="truncate text-sm font-medium text-stone-800 dark:text-zinc-100">{m.subject || "(no subject)"}</p>
+                        {m.labels.map((label) => (
+                          <Chip key={label} color="#3bbfc9">
+                            {label}
+                          </Chip>
+                        ))}
                         {m.category !== "primary" && <Chip color="#9b87f5">{CATEGORY[m.category]}</Chip>}
                       </div>
                       <p className="truncate text-xs text-stone-500">{m.sender}</p>

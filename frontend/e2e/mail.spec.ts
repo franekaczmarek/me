@@ -63,6 +63,7 @@ test("a user summarizes new mail and reads the summary, proposed tasks and email
     subject,
     received_at: "2026-10-24T08:00:00Z",
     category,
+    labels: subject === "E2E invoice" ? ["E2E label"] : [],
     summary: `About ${subject}`,
     importance,
     marked_read: false,
@@ -97,6 +98,7 @@ test("a user summarizes new mail and reads the summary, proposed tasks and email
   const emails = page.getByRole("region", { name: "Emails" });
   await expect(emails.getByRole("heading", { name: /E2E inbox/ })).toBeVisible();
   await expect(emails.getByRole("listitem", { name: "E2E newsletter" })).toContainText("Updates");
+  await expect(emails.getByRole("listitem", { name: "E2E invoice" })).toContainText("E2E label");
 
   await page.getByRole("button", { name: "✨ Summarize new mail" }).click();
   await expect(page.getByText("No new unread mail since the last summary.")).toBeVisible();

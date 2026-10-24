@@ -24,6 +24,8 @@ export type MailMessage = {
   subject: string;
   received_at: string | null;
   category: MailCategory;
+  /** The user's own Gmail labels ("Invoices"). */
+  labels: string[];
   summary: string;
   importance: Importance;
   marked_read: boolean;

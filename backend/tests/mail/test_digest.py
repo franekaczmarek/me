@@ -84,7 +84,7 @@ def test_check_drops_repeats_bad_durations_and_extra_tasks() -> None:
 
 
 def test_context_lists_the_emails() -> None:
-    mail = NewMail("m0", PRIVATE_ID, "Private", 1, 5, "updates", parse_mail(raw_mail("Parcel", "Arrives today")))
+    mail = NewMail("m0", PRIVATE_ID, "Private", 1, 5, "updates", ["Zakupy"], parse_mail(raw_mail("Parcel", "Arrives today")))
     context = build_context([mail], TODAY)
     assert context["today"] == "2026-10-24" and context["weekday"] == "Saturday"
     assert context["emails"] == [
@@ -92,6 +92,7 @@ def test_context_lists_the_emails() -> None:
             "ref": "m0",
             "inbox": "Private",
             "tab": "updates",
+            "labels": ["Zakupy"],
             "from": "Ann <ann@example.com>",
             "subject": "Parcel",
             "date": "2026-10-24T09:30+02:00",
@@ -146,7 +147,7 @@ def test_digest_reads_every_inbox_and_saves_the_result(
     gmail.add(
         "me@gmail.com",
         RawMail(12, "promotions", raw_mail("Sale", "50% off", date="Sat, 24 Oct 2026 08:00:00 +0000")),
-        RawMail(9, "primary", raw_mail("Invoice", "Pay 120 PLN by 30.10", date="Sat, 24 Oct 2026 09:00:00 +0000")),
+        RawMail(9, "primary", raw_mail("Invoice", "Pay 120 PLN by 30.10", date="Sat, 24 Oct 2026 09:00:00 +0000"), ["Faktury"]),
         uidvalidity=77,
     )
     gmail.errors["work@firm.pl"] = MailLoginError()
@@ -191,6 +192,8 @@ def test_digest_reads_every_inbox_and_saves_the_result(
         (12, 77, "promotions", "low", "Half-price sale"),
     ]
     assert all(m["digest_id"] == DIGEST_ID and m["account_id"] == PRIVATE_ID for m in messages)
+    assert [m["labels"] for m in messages] == [["Faktury"], []]
+    assert context["emails"][0]["labels"] == ["Faktury"]
 
     patch = next(r for r in fake_db.requests if r.method == "PATCH")
     [proposal] = json.loads(patch.content)["proposals"]
@@ -233,6 +236,7 @@ def test_latest_digest(api: TestClient, fake_db: FakeSupabase) -> None:
         "subject": "Invoice",
         "received_at": None,
         "category": "primary",
+        "labels": ["Faktury"],
         "summary": "Pay it",
         "importance": "high",
         "marked_read": False,

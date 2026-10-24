@@ -16,6 +16,7 @@ const message = (id: string, subject: string, importance: "low" | "normal" | "hi
   subject,
   received_at: "2026-10-24T08:00:00Z",
   category,
+  labels: subject === "Invoice" ? ["Faktury"] : [],
   summary: `About ${subject}`,
   importance,
   marked_read: false,
@@ -82,6 +83,7 @@ describe("DigestView", () => {
     expect(within(emails).getAllByRole("listitem").map((li) => li.getAttribute("aria-label"))).toEqual(["Invoice", "Sale"]);
     expect(within(emails).getByRole("listitem", { name: "Sale" })).toHaveTextContent("Promotions");
     expect(within(emails).getByRole("listitem", { name: "Invoice" })).not.toHaveTextContent("Primary");
+    expect(within(emails).getByRole("listitem", { name: "Invoice" })).toHaveTextContent("Faktury");
   });
 
   it("runs a new digest and shows warnings", async () => {

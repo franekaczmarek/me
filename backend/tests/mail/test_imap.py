@@ -1,9 +1,12 @@
 import imaplib
+from datetime import date
 
 import pytest
 
 from app.mail import imap
-from app.mail.imap import Gmail, MailConnectionError, MailLoginError
+from app.mail.imap import Gmail, MailConnectionError, MailLoginError, decode_utf7, user_labels
+
+ALL_MAIL = '"[Gmail]/Wszystkie"'
 
 
 class FakeConn:
@@ -22,6 +25,14 @@ class FakeConn:
             raise imaplib.IMAP4.error("AUTHENTICATIONFAILED")
         return "OK", [b"ok"]
 
+    def list(self):
+        return "OK", [
+            b'(\\HasNoChildren) "/" "INBOX"',
+            b'(\\HasNoChildren) "/" "Faktury"',
+            b'(\\All \\HasNoChildren) "/" "[Gmail]/Wszystkie"',
+            b'(\\HasNoChildren \\Junk) "/" "[Gmail]/Spam"',
+        ]
+
     def select(self, mailbox: str, readonly: bool = False):
         self.commands.append(("SELECT", mailbox, readonly))
         return "OK", [b"3"]
@@ -33,6 +44,7 @@ class FakeConn:
         self.commands.append((command, *args))
         if command == "SEARCH":
             if args[0] == "UNSEEN":
+                assert args[1] == "SINCE"
                 uids = self.unread
             else:
                 tab = args[1].strip('"').split(":")[1]
@@ -41,7 +53,8 @@ class FakeConn:
         if command == "FETCH":
             data: list = []
             for uid in args[0].split(","):
-                data += [(f"1 (UID {uid} BODY[]<0> {{5}}".encode(), f"mail{uid}".encode()), b")"]
+                labels = '"\\\\Important" "P&AUI-atno&AVs-ci" Work' if uid == "12" else ""
+                data += [(f"1 (X-GM-LABELS ({labels}) UID {uid} BODY[]<0> {{5}}".encode(), f"mail{uid}".encode()), b")"]
             return "OK", data
         return "OK", [b""]
 
@@ -57,16 +70,18 @@ def conn(monkeypatch: pytest.MonkeyPatch) -> FakeConn:
 
 
 def test_fetch_unread_reads_without_marking(conn: FakeConn) -> None:
-    unread = Gmail().fetch_unread("me@gmail.com", "secret", limit=3)
+    unread = Gmail().fetch_unread("me@gmail.com", "secret", limit=3, today=date(2026, 10, 24))
     assert unread.uidvalidity == 7
-    assert [(m.uid, m.category, m.raw) for m in unread.mails] == [
-        (12, "updates", b"mail12"),
-        (9, "primary", b"mail9"),
-        (5, "promotions", b"mail5"),
+    assert [(m.uid, m.category, m.raw, m.labels) for m in unread.mails] == [
+        (12, "updates", b"mail12", ["Płatności", "Work"]),
+        (9, "primary", b"mail9", []),
+        (5, "promotions", b"mail5", []),
     ]
-    assert ("SELECT", "INBOX", True) in conn.commands
+    # All Mail (any label, spam and trash excluded), found by its flag whatever the account's language.
+    assert ("SELECT", ALL_MAIL, True) in conn.commands
+    assert ("SEARCH", "UNSEEN", "SINCE", "24-Sep-2026") in conn.commands
     fetch = next(c for c in conn.commands if c[0] == "FETCH")
-    assert fetch[1] == "5,9,12" and "PEEK" in fetch[2]
+    assert fetch[1] == "5,9,12" and "PEEK" in fetch[2] and "X-GM-LABELS" in fetch[2]
     assert not any(c[0] == "STORE" for c in conn.commands)
     assert conn.logged_out
 
@@ -79,7 +94,7 @@ def test_fetch_with_nothing_unread(conn: FakeConn) -> None:
 
 def test_mark_read_checks_uidvalidity(conn: FakeConn) -> None:
     assert Gmail().mark_read("me@gmail.com", "secret", 7, [5, 9]) is True
-    assert ("SELECT", "INBOX", False) in conn.commands
+    assert ("SELECT", ALL_MAIL, False) in conn.commands
     assert ("STORE", "5,9", "+FLAGS", "(\\Seen)") in conn.commands
     conn.commands.clear()
     assert Gmail().mark_read("me@gmail.com", "secret", 8, [5]) is False
@@ -107,3 +122,22 @@ def test_dropped_connection(conn: FakeConn) -> None:
     conn.uid = drop  # type: ignore[method-assign]
     with pytest.raises(MailConnectionError):
         Gmail().fetch_unread("me@gmail.com", "secret", limit=40)
+
+
+def test_all_mail_must_be_visible(conn: FakeConn) -> None:
+    conn.list = lambda: ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])  # type: ignore[method-assign]
+    with pytest.raises(MailConnectionError):
+        Gmail().fetch_unread("me@gmail.com", "secret", limit=40)
+
+
+def test_decode_utf7() -> None:
+    assert decode_utf7("P&AUI-atno&AVs-ci") == "Płatności"
+    assert decode_utf7("Tom &- Jerry") == "Tom & Jerry"
+    assert decode_utf7("Plain") == "Plain"
+
+
+def test_user_labels() -> None:
+    header = b'1 (X-GM-LABELS ("\\\\Inbox" "\\\\Important" "Bank \\"PKO\\"" Faktury "Zam&APM-wienia") UID 5 BODY[] {9}'
+    assert user_labels(header) == ['Bank "PKO"', "Faktury", "Zamówienia"]
+    assert user_labels(b"1 (X-GM-LABELS () UID 5)") == []
+    assert user_labels(b"1 (UID 5)") == []

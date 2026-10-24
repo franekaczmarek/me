@@ -33,7 +33,7 @@ class FakeGmail:
     def add(self, email: str, *mails: RawMail, uidvalidity: int = 1) -> None:
         self.inboxes[email] = Unread(uidvalidity, list(mails))
 
-    def fetch_unread(self, email: str, password: str, limit: int) -> Unread:
+    def fetch_unread(self, email: str, password: str, limit: int, today=None) -> Unread:
         self.check_login(email, password)
         unread = self.inboxes.get(email, Unread(1, []))
         return Unread(unread.uidvalidity, unread.mails[:limit])
