@@ -7,8 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
+from app.calendar.capacity import DayOff
 from app.calendar.router import MAX_RANGE_DAYS, load_days_off, load_occurrences, load_schedule
-from app.core.supabase import Supabase, SupabaseDep, one_or_404
+from app.core.supabase import Supabase, SupabaseDep, one_or_404, parallel
 from app.todo.days import build_days, window_end
 from app.todo.recurrence import Rule, occurrences
 from app.todo.schemas import TASK_COLUMNS, DaysFeed, Task, TaskCreate, TaskUpdate, task_row
@@ -33,7 +34,16 @@ def _today(value: date | None) -> date:
 
 def sync_routines(db: Supabase, today: date) -> None:
     """Create routine tasks for today … +2 weeks and mark past undone occurrences as missed."""
-    routines = db.rest("GET", ROUTINES, params={"select": ROUTINE_COLUMNS, "active": "eq.true"})
+    routines, _ = parallel(
+        lambda: db.rest("GET", ROUTINES, params={"select": ROUTINE_COLUMNS, "active": "eq.true"}),
+        lambda: db.rest(
+            "PATCH",
+            TASKS,
+            params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{today}"},
+            json={"status": "missed"},
+            prefer="return=minimal",
+        ),
+    )
     rows = []
     for r in routines:
         rule = Rule(
@@ -64,39 +74,42 @@ def sync_routines(db: Supabase, today: date) -> None:
             json=rows,
             prefer="resolution=ignore-duplicates,return=minimal",
         )
-    db.rest(
-        "PATCH",
-        TASKS,
-        params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{today}"},
-        json={"status": "missed"},
-        prefer="return=minimal",
-    )
 
 
 @router.get("/days", response_model=DaysFeed)
-def read_days(db: SupabaseDep, today: TodayParam = None) -> DaysFeed:
+def read_days(
+    db: SupabaseDep,
+    today: TodayParam = None,
+    sync: Annotated[bool, Query(description="false skips the routine sync (e.g. right after a change)")] = True,
+) -> DaysFeed:
     """Overdue days, today, the coming week and planned days up to 2 weeks ahead, plus the inbox."""
     day = _today(today)
-    sync_routines(db, day)
     end = window_end(day)
-    rows = db.rest(
-        "GET",
-        TASKS,
-        params={
-            "select": TASK_COLUMNS,
-            "status": "neq.missed",
-            "or": (
-                f"(planned_date.is.null,and(planned_date.gte.{day},planned_date.lte.{end}),"
-                f"and(planned_date.lt.{day},status.eq.open))"
-            ),
-        },
+
+    def tasks_and_days_off() -> tuple[list[Task], list[DayOff]]:
+        if sync:
+            sync_routines(db, day)
+        rows = db.rest(
+            "GET",
+            TASKS,
+            params={
+                "select": TASK_COLUMNS,
+                "status": "neq.missed",
+                "or": (
+                    f"(planned_date.is.null,and(planned_date.gte.{day},planned_date.lte.{end}),"
+                    f"and(planned_date.lt.{day},status.eq.open))"
+                ),
+            },
+        )
+        tasks = [Task(**r) for r in rows]
+        # Overdue days are shown too, so days off are needed from the oldest of them.
+        first = min([t.planned_date for t in tasks if t.planned_date] + [day])
+        return tasks, load_days_off(db, first, end)
+
+    (tasks, days_off), schedule, events = parallel(
+        tasks_and_days_off, lambda: load_schedule(db), lambda: load_occurrences(db, day, end)
     )
-    tasks = [Task(**r) for r in rows]
-    # Overdue days are shown too, so days off are needed from the oldest of them.
-    first = min([t.planned_date for t in tasks if t.planned_date] + [day])
-    days, inbox = build_days(
-        tasks, day, load_schedule(db).to_capacity(), load_days_off(db, first, end), load_occurrences(db, day, end)
-    )
+    days, inbox = build_days(tasks, day, schedule.to_capacity(), days_off, events)
     return DaysFeed(today=day, days=days, inbox=inbox)
 
 

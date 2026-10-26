@@ -3,8 +3,12 @@
 Requests carry the user's access token, so Row Level Security and storage policies apply to every call.
 """
 
+import contextvars
 import logging
 import ssl
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -14,6 +18,7 @@ from fastapi import Depends, HTTPException, status
 
 from app.core.auth import CurrentUserDep
 from app.core.config import get_settings
+from app.core.timing import record_db
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,20 @@ _INVALID_INPUT_CODES = {
 
 
 CONNECT_RETRIES = 3
+
+# Each Supabase call is a round trip to the cloud, so independent ones run at the same time.
+_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="supabase")
+# Off in unit tests: the fake database answers in the order the calls are made.
+PARALLEL = True
+
+
+def parallel(*calls: Callable[[], Any]) -> list[Any]:
+    """Run independent calls at once; results come in call order, the first error is raised."""
+    if not PARALLEL or len(calls) < 2:
+        return [call() for call in calls]
+    # Copying the context keeps the request's Server-Timing count.
+    futures = [_pool.submit(contextvars.copy_context().run, call) for call in calls]
+    return [future.result() for future in futures]
 
 
 @lru_cache
@@ -93,6 +112,7 @@ class Supabase:
     def _send(
         self, method: str, url: str, *, headers: dict[str, str] | None = None, **kwargs: Any
     ) -> httpx.Response:
+        started = time.perf_counter()
         try:
             response = self._http.request(
                 method, url, headers={"Authorization": f"Bearer {self._token}", **(headers or {})}, **kwargs
@@ -100,6 +120,8 @@ class Supabase:
         except httpx.HTTPError as exc:
             logger.error("Supabase request failed: %s", exc)
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Database unavailable") from exc
+        finally:
+            record_db(time.perf_counter() - started)
         if response.is_success:
             return response
         raise _to_http_error(response)

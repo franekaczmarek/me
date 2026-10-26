@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app.core import supabase
 from app.core.supabase import get_http_client
 from app.main import app
 
@@ -43,7 +44,9 @@ class FakeSupabase:
 
 
 @pytest.fixture
-def fake_db() -> Iterator[FakeSupabase]:
+def fake_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeSupabase]:
+    # Replies are queued in order, so calls the app makes in parallel run one by one here.
+    monkeypatch.setattr(supabase, "PARALLEL", False)
     fake = FakeSupabase()
     http = httpx.Client(base_url="https://db.test", transport=httpx.MockTransport(fake.handle))
     app.dependency_overrides[get_http_client] = lambda: http

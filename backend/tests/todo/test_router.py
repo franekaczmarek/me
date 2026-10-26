@@ -64,8 +64,8 @@ def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
     fake_db.reply(200, [])  # routines
     fake_db.reply(204)  # mark missed
     fake_db.reply(200, [TASK_ROW, {**TASK_ROW, "id": "77777777-7777-7777-7777-777777777777", "planned_date": None}])
-    fake_db.reply(200, [])  # schedule: defaults
     fake_db.reply(200, [])  # days off
+    fake_db.reply(200, [])  # schedule: defaults
 
     response = api.get("/todo/days", params={"today": "2026-03-04"})
 
@@ -88,8 +88,8 @@ def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
 
 def test_days_feed_creates_routine_occurrences_for_two_weeks(api: TestClient, fake_db: FakeSupabase) -> None:
     fake_db.reply(200, [ROUTINE_ROW])
+    fake_db.reply(204)  # mark missed
     fake_db.reply(201, [])  # insert occurrences
-    fake_db.reply(204)
     fake_db.reply(200, [])
     fake_db.reply(200, [])
     fake_db.reply(200, [])
@@ -102,6 +102,20 @@ def test_days_feed_creates_routine_occurrences_for_two_weeks(api: TestClient, fa
     # Wednesdays from 2026-03-04 to 2026-03-17.
     assert [r["occurrence_date"] for r in rows] == ["2026-03-04", "2026-03-11"]
     assert (rows[0]["planned_date"], rows[0]["routine_id"], rows[0]["duration_min"]) == ("2026-03-04", ROUTINE_ID, 45)
+
+
+def test_days_feed_without_sync_only_reads(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [TASK_ROW])
+    response = api.get("/todo/days", params={"today": "2026-03-04", "sync": "false"})
+
+    assert response.status_code == 200, response.text
+    assert [t["title"] for t in response.json()["days"][0]["tasks"]] == ["Pay rent"]
+    assert {r.method for r in fake_db.requests} == {"GET"}
+    assert requests_to(fake_db, "/rest/v1/todo_routines") == []
+    paths = sorted(r.url.path for r in fake_db.requests)
+    assert paths == sorted(
+        ["/rest/v1/todo_tasks", "/rest/v1/calendar_days_off", "/rest/v1/calendar_work_schedule", "/rest/v1/calendar_events"]
+    )
 
 
 def test_days_feed_rejects_a_bad_date(api: TestClient, fake_db: FakeSupabase) -> None:

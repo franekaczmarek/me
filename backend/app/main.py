@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.timing import timing_middleware
 from app.calendar.quick_add import router as calendar_quick_add_router
 from app.calendar.router import router as calendar_router
 from app.calendar.suggest import router as calendar_suggest_router
@@ -19,6 +20,8 @@ from app.todo.router import router as todo_router
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
+
+app.middleware("http")(timing_middleware)
 
 app.add_middleware(
     CORSMiddleware,
