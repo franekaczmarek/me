@@ -7,7 +7,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
-from app.calendar.capacity import DayOff
 from app.calendar.router import MAX_RANGE_DAYS, load_days_off, load_occurrences, load_schedule
 from app.core.supabase import Supabase, SupabaseDep, one_or_404, parallel
 from app.todo.days import build_days, window_end
@@ -32,18 +31,8 @@ def _today(value: date | None) -> date:
     return value or date.today()
 
 
-def sync_routines(db: Supabase, today: date) -> None:
-    """Create routine tasks for today … +2 weeks and mark past undone occurrences as missed."""
-    routines, _ = parallel(
-        lambda: db.rest("GET", ROUTINES, params={"select": ROUTINE_COLUMNS, "active": "eq.true"}),
-        lambda: db.rest(
-            "PATCH",
-            TASKS,
-            params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{today}"},
-            json={"status": "missed"},
-            prefer="return=minimal",
-        ),
-    )
+def routine_occurrences(routines: list[dict[str, Any]], today: date) -> list[dict[str, Any]]:
+    """Task rows for every occurrence of the routines from today to the end of the window."""
     rows = []
     for r in routines:
         rule = Rule(
@@ -65,15 +54,7 @@ def sync_routines(db: Supabase, today: date) -> None:
                     "occurrence_date": day.isoformat(),
                 }
             )
-    if rows:
-        # Existing occurrences (also ones the user moved or skipped) are left alone.
-        db.rest(
-            "POST",
-            TASKS,
-            params={"on_conflict": "routine_id,occurrence_date"},
-            json=rows,
-            prefer="resolution=ignore-duplicates,return=minimal",
-        )
+    return rows
 
 
 @router.get("/days", response_model=DaysFeed)
@@ -82,33 +63,67 @@ def read_days(
     today: TodayParam = None,
     sync: Annotated[bool, Query(description="false skips the routine sync (e.g. right after a change)")] = True,
 ) -> DaysFeed:
-    """Overdue days, today, the coming week and planned days up to 2 weeks ahead, plus the inbox."""
+    """Overdue days, today, the coming week and planned days up to 2 weeks ahead, plus the inbox.
+
+    Also syncs routines: creates their missing occurrences and marks past undone ones as missed.
+    Everything is read at once and written only when something changed (about once a day).
+    """
     day = _today(today)
     end = window_end(day)
-
-    def tasks_and_days_off() -> tuple[list[Task], list[DayOff]]:
-        if sync:
-            sync_routines(db, day)
-        rows = db.rest(
+    routines, rows, schedule, events = parallel(
+        lambda: db.rest("GET", ROUTINES, params={"select": ROUTINE_COLUMNS, "active": "eq.true"}) if sync else [],
+        lambda: db.rest(
             "GET",
             TASKS,
             params={
                 "select": TASK_COLUMNS,
-                "status": "neq.missed",
+                # Skipped (missed) occurrences in the window are read too, so they aren't re-created.
                 "or": (
-                    f"(planned_date.is.null,and(planned_date.gte.{day},planned_date.lte.{end}),"
+                    f"(and(planned_date.is.null,status.neq.missed),and(planned_date.gte.{day},planned_date.lte.{end}),"
                     f"and(planned_date.lt.{day},status.eq.open))"
                 ),
             },
-        )
-        tasks = [Task(**r) for r in rows]
-        # Overdue days are shown too, so days off are needed from the oldest of them.
-        first = min([t.planned_date for t in tasks if t.planned_date] + [day])
-        return tasks, load_days_off(db, first, end)
-
-    (tasks, days_off), schedule, events = parallel(
-        tasks_and_days_off, lambda: load_schedule(db), lambda: load_occurrences(db, day, end)
+        ),
+        lambda: load_schedule(db),
+        lambda: load_occurrences(db, day, end),
     )
+
+    def past_routine_task(r: dict[str, Any]) -> bool:
+        return sync and r["routine_id"] is not None and r["planned_date"] is not None and r["planned_date"] < str(day)
+
+    existing = {(r["routine_id"], r["occurrence_date"]) for r in rows if r["routine_id"]}
+    # Occurrences the user moved beyond the window look missing too; inserting them again is a no-op.
+    missing = [o for o in routine_occurrences(routines, day) if (o["routine_id"], o["occurrence_date"]) not in existing]
+    missed = any(past_routine_task(r) for r in rows)
+    tasks = [Task(**r) for r in rows if r["status"] != "missed" and not past_routine_task(r)]
+    # Overdue days are shown too, so days off are needed from the oldest of them.
+    first = min([t.planned_date for t in tasks if t.planned_date] + [day])
+
+    calls = [lambda: load_days_off(db, first, end)]
+    if missing:
+        calls.append(
+            lambda: db.rest(
+                "POST",
+                TASKS,
+                params={"on_conflict": "routine_id,occurrence_date", "select": TASK_COLUMNS},
+                json=missing,
+                # Only rows actually inserted come back; existing occurrences are left alone.
+                prefer="resolution=ignore-duplicates,return=representation",
+            )
+        )
+    if missed:
+        calls.append(
+            lambda: db.rest(
+                "PATCH",
+                TASKS,
+                params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{day}"},
+                json={"status": "missed"},
+                prefer="return=minimal",
+            )
+        )
+    days_off, *written = parallel(*calls)
+    if missing:
+        tasks += [Task(**r) for r in written[0]]
     days, inbox = build_days(tasks, day, schedule.to_capacity(), days_off, events)
     return DaysFeed(today=day, days=days, inbox=inbox)
 

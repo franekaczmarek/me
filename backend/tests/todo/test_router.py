@@ -60,12 +60,33 @@ def test_days_feed_requires_a_token(client: TestClient, fake_db: FakeSupabase) -
     assert fake_db.requests == []
 
 
+def occurrence_row(day: str, status: str = "open", **fields) -> dict:
+    return {
+        **TASK_ROW,
+        "id": f"8888888{day[-1]}-8888-8888-8888-888888888888",
+        "title": "Workout",
+        "planned_date": day,
+        "status": status,
+        "routine_id": ROUTINE_ID,
+        "occurrence_date": day,
+        **fields,
+    }
+
+
 def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
     fake_db.reply(200, [])  # routines
-    fake_db.reply(204)  # mark missed
-    fake_db.reply(200, [TASK_ROW, {**TASK_ROW, "id": "77777777-7777-7777-7777-777777777777", "planned_date": None}])
-    fake_db.reply(200, [])  # days off
+    fake_db.reply(
+        200,
+        [
+            TASK_ROW,
+            {**TASK_ROW, "id": "77777777-7777-7777-7777-777777777777", "planned_date": None},
+            occurrence_row("2026-03-02"),  # a past routine occurrence not done → missed
+        ],
+    )
     fake_db.reply(200, [])  # schedule: defaults
+    fake_db.reply(200, [])  # events
+    fake_db.reply(200, [])  # days off
+    fake_db.reply(204)  # mark missed
 
     response = api.get("/todo/days", params={"today": "2026-03-04"})
 
@@ -77,31 +98,53 @@ def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
     assert body["days"][0]["capacity_min"] == 180
     assert [t["title"] for t in body["days"][0]["tasks"]] == ["Pay rent"]
     assert len(body["inbox"]) == 1
+    assert "Workout" not in response.text  # the missed occurrence isn't shown as overdue
 
     [tasks_query] = requests_to(fake_db, "/rest/v1/todo_tasks", "GET")
-    assert tasks_query.url.params["status"] == "neq.missed"
-    assert "planned_date.is.null" in tasks_query.url.params["or"]
+    assert "status" not in tasks_query.url.params
+    assert "and(planned_date.is.null,status.neq.missed)" in tasks_query.url.params["or"]
     [missed] = requests_to(fake_db, "/rest/v1/todo_tasks", "PATCH")
     assert missed.url.params["planned_date"] == "lt.2026-03-04"
     assert missed.url.params["routine_id"] == "not.is.null"
+    assert json.loads(missed.content) == {"status": "missed"}
+    assert requests_to(fake_db, "/rest/v1/todo_tasks", "POST") == []
 
 
 def test_days_feed_creates_routine_occurrences_for_two_weeks(api: TestClient, fake_db: FakeSupabase) -> None:
     fake_db.reply(200, [ROUTINE_ROW])
-    fake_db.reply(204)  # mark missed
-    fake_db.reply(201, [])  # insert occurrences
-    fake_db.reply(200, [])
-    fake_db.reply(200, [])
-    fake_db.reply(200, [])
-    assert api.get("/todo/days", params={"today": "2026-03-04"}).status_code == 200
+    fake_db.reply(200, [])  # tasks
+    fake_db.reply(200, [])  # schedule
+    fake_db.reply(200, [])  # events
+    fake_db.reply(200, [])  # days off
+    fake_db.reply(201, [occurrence_row("2026-03-04"), occurrence_row("2026-03-11")])  # inserted
+    response = api.get("/todo/days", params={"today": "2026-03-04"})
+    assert response.status_code == 200, response.text
 
     [insert] = requests_to(fake_db, "/rest/v1/todo_tasks", "POST")
     assert insert.url.params["on_conflict"] == "routine_id,occurrence_date"
     assert "ignore-duplicates" in insert.headers["Prefer"]
+    assert "return=representation" in insert.headers["Prefer"]
     rows = json.loads(insert.content)
     # Wednesdays from 2026-03-04 to 2026-03-17.
     assert [r["occurrence_date"] for r in rows] == ["2026-03-04", "2026-03-11"]
     assert (rows[0]["planned_date"], rows[0]["routine_id"], rows[0]["duration_min"]) == ("2026-03-04", ROUTINE_ID, 45)
+    # Shown right away, without reading the tasks again.
+    assert [t["title"] for t in response.json()["days"][0]["tasks"]] == ["Workout"]
+    assert len(requests_to(fake_db, "/rest/v1/todo_tasks", "GET")) == 1
+    assert requests_to(fake_db, "/rest/v1/todo_tasks", "PATCH") == []
+
+
+def test_days_feed_writes_nothing_when_routines_are_in_sync(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [ROUTINE_ROW])
+    # Today's occurrence moved to the inbox, next week's skipped by the user.
+    fake_db.reply(200, [occurrence_row("2026-03-04", planned_date=None), occurrence_row("2026-03-11", "missed")])
+    response = api.get("/todo/days", params={"today": "2026-03-04"})
+
+    assert response.status_code == 200, response.text
+    assert {r.method for r in fake_db.requests} == {"GET"}
+    body = response.json()
+    assert [t["title"] for t in body["inbox"]] == ["Workout"]
+    assert all(d["tasks"] == [] for d in body["days"])  # the skipped one stays hidden
 
 
 def test_days_feed_without_sync_only_reads(api: TestClient, fake_db: FakeSupabase) -> None:

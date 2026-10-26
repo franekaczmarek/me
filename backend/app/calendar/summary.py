@@ -11,7 +11,7 @@ from app.calendar.capacity import DayOff
 from app.calendar.events import add_months, minutes_on
 from app.calendar.router import load_days_off, load_occurrences
 from app.calendar.schemas import Occurrence
-from app.core.supabase import Supabase, SupabaseDep
+from app.core.supabase import Supabase, SupabaseDep, parallel
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
@@ -127,12 +127,16 @@ def read_summary(
     horizon = today + timedelta(days=HORIZON_DAYS)
     start, end = min(first, today), max(last, horizon)
 
-    found = load_occurrences(db, start, end)
-    in_month = [o for o in found if o.end_date >= first and o.start_date <= last]
-    tasks = db.rest(
-        "GET", "todo_tasks", params={"select": "planned_date,status", "and": _between("planned_date", first, last)}
+    found, tasks, days_off, linked = parallel(
+        lambda: load_occurrences(db, start, end),
+        lambda: db.rest(
+            "GET", "todo_tasks", params={"select": "planned_date,status", "and": _between("planned_date", first, last)}
+        ),
+        lambda: load_days_off(db, first, last),
+        lambda: load_linked(db, today, horizon),
     )
+    in_month = [o for o in found if o.end_date >= first and o.start_date <= last]
     return Summary(
-        month=summarize_month(first, in_month, load_days_off(db, first, last), tasks, today),
-        upcoming=upcoming(found, today, load_linked(db, today, horizon)),
+        month=summarize_month(first, in_month, days_off, tasks, today),
+        upcoming=upcoming(found, today, linked),
     )
