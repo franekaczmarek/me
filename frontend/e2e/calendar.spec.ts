@@ -177,7 +177,21 @@ test("calendar events show in the to-do list, and tasks can be dragged between c
         return tasks.find((t) => t.id === task.id)?.planned_date;
       })
       .toBe(tomorrow);
+
+    // Checking off doesn't wait for a slow server, and is saved.
+    await page.route("**/todo/tasks/*/complete", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.continue();
+    });
     await grid.getByRole("checkbox", { name: "Complete E2E wine" }).click();
+    await expect(grid.getByRole("checkbox", { name: "Reopen E2E wine" })).toBeVisible({ timeout: 1000 });
+    await expect
+      .poll(async () => {
+        const tasks: { id: string; status: string }[] = await (await api.get(`/todo/tasks?start=${today}&end=${tomorrow}`)).json();
+        return tasks.find((t) => t.id === task.id)?.status;
+      }, { timeout: 10_000 })
+      .toBe("done");
+    await page.unroute("**/todo/tasks/*/complete");
     await expect(grid.getByRole("checkbox", { name: "Reopen E2E wine" })).toBeVisible();
   } finally {
     await api.delete(`/calendar/events/${event.id}`);

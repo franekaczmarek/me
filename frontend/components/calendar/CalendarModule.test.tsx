@@ -299,6 +299,36 @@ describe("CalendarModule", () => {
     expect(within(within(day).getByRole("list", { name: "Tasks" })).getByText("Buy wine")).toBeInTheDocument();
   });
 
+  it("checks off a task at once, keeps it through a reload that was already on its way, and saves it", async () => {
+    let finish!: () => void;
+    todoApi.completeTask.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+    render(<CalendarModule />);
+    const month = await findGrid();
+    await userEvent.click(await within(month).findByRole("checkbox", { name: "Complete Buy wine" }));
+    expect(within(month).getByRole("checkbox", { name: "Reopen Buy wine" })).toBeInTheDocument();
+
+    // Moving between months reloads the old (still open) task; the check mark stays.
+    await userEvent.click(screen.getByRole("button", { name: "Next month" }));
+    await userEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    expect(await within(await findGrid()).findByRole("checkbox", { name: "Reopen Buy wine" })).toBeInTheDocument();
+
+    const loads = todoApi.tasks.mock.calls.length;
+    todoApi.tasks.mockResolvedValue([{ ...wine, status: "done", completed_at: "x" }]);
+    finish();
+    await vi.waitFor(() => expect(todoApi.tasks.mock.calls.length).toBe(loads + 1));
+    expect(within(grid()).getByRole("checkbox", { name: "Reopen Buy wine" })).toBeInTheDocument();
+  });
+
+  it("puts a task back when saving fails", async () => {
+    todoApi.completeTask.mockRejectedValue(new Error("Database unavailable"));
+    render(<CalendarModule />);
+    const month = await findGrid();
+    todoApi.tasks.mockRejectedValue(new Error("offline"));
+    await userEvent.click(await within(month).findByRole("checkbox", { name: "Complete Buy wine" }));
+    expect(await screen.findByText("Database unavailable")).toBeInTheDocument();
+    expect(within(grid()).getByRole("checkbox", { name: "Complete Buy wine" })).toBeInTheDocument();
+  });
+
   it("moves a task by dropping it on another day", async () => {
     render(<CalendarModule />);
     const month = await findGrid();

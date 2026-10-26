@@ -104,6 +104,8 @@ export function CalendarModule() {
 
   // Only the latest load may update the screen (an older, slower one would show the wrong range).
   const latest = useRef(0);
+  // Task changes not saved yet, laid over every load so a reload can't undo them on screen.
+  const unsaved = useRef(new Map<string, (t: Task) => Task>());
   const reload = useCallback(() => {
     const request = ++latest.current;
     return Promise.all([
@@ -113,7 +115,7 @@ export function CalendarModule() {
       calendarApi.summary(month, today),
     ]).then(([occurrences, tasks, daysOff, sum]) => {
       if (request !== latest.current) return;
-      setData({ occurrences, tasks, daysOff });
+      setData({ occurrences, tasks: tasks.map((t) => unsaved.current.get(t.id)?.(t) ?? t), daysOff });
       setSummary(sum);
     });
   }, [first, last, month, today]);
@@ -172,24 +174,39 @@ export function CalendarModule() {
     await reload().catch(() => {});
   }
 
-  /** Runs a task change, then reloads (the server decides what is shown). */
-  async function act(action: () => Promise<unknown>) {
+  /**
+   * A task change: shown at once (put back if saving fails), then reloaded (the server decides what is shown).
+   */
+  async function actOnTask(task: Task, change: (t: Task) => Task, action: () => Promise<unknown>) {
     setActionError(null);
+    const swap = (to: (t: Task) => Task) =>
+      setData((d) => d && { ...d, tasks: d.tasks.map((t) => (t.id === task.id ? to(t) : t)) });
+    unsaved.current.set(task.id, change);
+    swap(change);
     try {
       await action();
     } catch (e) {
       setActionError((e as Error).message);
+      if (unsaved.current.get(task.id) === change) swap(() => task);
+    } finally {
+      if (unsaved.current.get(task.id) === change) unsaved.current.delete(task.id);
     }
     await reload().catch(() => {});
   }
 
   const toggleTask = (task: Task) =>
-    act(() => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)));
+    actOnTask(
+      task,
+      (t) =>
+        task.status === "done"
+          ? { ...t, status: "open", completed_at: null }
+          : { ...t, status: "done", completed_at: new Date().toISOString() },
+      () => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)),
+    );
 
   function moveTask(task: Task, day: string | null) {
     if (!day) return;
-    setData((d) => d && { ...d, tasks: d.tasks.map((t) => (t.id === task.id ? { ...t, planned_date: day } : t)) });
-    act(() => todoApi.updateTask(task.id, { planned_date: day }));
+    actOnTask(task, (t) => ({ ...t, planned_date: day }), () => todoApi.updateTask(task.id, { planned_date: day }));
   }
 
   async function saveTask(input: TaskInput) {
