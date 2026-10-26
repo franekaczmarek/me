@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { todoApi } from "@/lib/todo/api";
+import { withMove, withStatus } from "@/lib/todo/feed";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
 import { DragProvider, DropZone, INBOX } from "./dnd";
@@ -15,6 +16,7 @@ import { StatsCard } from "./StatsCard";
 import { TaskForm } from "./TaskForm";
 import { TaskRow } from "./TaskRow";
 
+type Edit = (feed: DaysFeed) => DaysFeed;
 type Panel = { mode: "edit"; task: Task } | { mode: "new"; date: string | null } | null;
 
 export function TodoModule() {
@@ -29,10 +31,13 @@ export function TodoModule() {
   const [suggesting, setSuggesting] = useState(false);
   const todayRef = useRef<HTMLElement>(null);
   const centred = useRef(false);
+  // Changes still waiting for the server; a feed loaded meanwhile would undo the newer ones on screen.
+  const pending = useRef(0);
 
   const reload = useCallback(
-    () =>
-      todoApi.days().then((f) => {
+    (sync = true) =>
+      todoApi.days(sync).then((f) => {
+        if (pending.current > 0) return;
         setFeed(f);
         setVersion((v) => v + 1);
       }),
@@ -51,15 +56,25 @@ export function TodoModule() {
     }
   }, [feed]);
 
-  /** Runs a change, then reloads the feed (the server decides what is shown where). */
-  async function act(action: () => Promise<unknown>) {
+  /**
+   * Runs a change, showing `local` right away (put back with `undo` if it fails), then reloads the
+   * feed once the last of several quick changes is saved (the server decides what is shown where).
+   */
+  async function act(action: () => Promise<unknown>, local?: { apply: Edit; undo: Edit }) {
     setActionError(null);
+    if (local) setFeed((f) => f && local.apply(f));
+    pending.current += 1;
+    let failed = false;
     try {
       await action();
-      await reload();
     } catch (e) {
+      failed = true;
+      if (local) setFeed((f) => f && local.undo(f));
       setActionError((e as Error).message);
+    } finally {
+      pending.current -= 1;
     }
+    if (pending.current === 0) await reload(false).catch((e: Error) => failed || setActionError(e.message));
   }
 
   if (error) {
@@ -81,9 +96,18 @@ export function TodoModule() {
   if (!feed) return <p className="p-6 text-sm text-zinc-500">Loading your tasks…</p>;
 
   const toggle = (task: Task) =>
-    act(() => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)));
+    act(() => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)), {
+      apply: (f) =>
+        task.status === "done"
+          ? withStatus(f, task.id, "open", null)
+          : withStatus(f, task.id, "done", new Date().toISOString()),
+      undo: (f) => withStatus(f, task.id, task.status, task.completed_at),
+    });
   const move = (task: Task, plannedDate: string | null) =>
-    act(() => todoApi.updateTask(task.id, { planned_date: plannedDate }));
+    act(() => todoApi.updateTask(task.id, { planned_date: plannedDate }), {
+      apply: (f) => withMove(f, task.id, plannedDate),
+      undo: (f) => withMove(f, task.id, task.planned_date),
+    });
   const add = (title: string, plannedDate: string | null) =>
     act(() => todoApi.createTask({ title, planned_date: plannedDate }));
   const open = (task: Task) => setPanel({ mode: "edit", task });

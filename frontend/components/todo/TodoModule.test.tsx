@@ -142,6 +142,53 @@ describe("TodoModule", () => {
     expect(todoApi.stats.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("shows a check-off right away, before the server answers, then reloads without syncing routines", async () => {
+    let finish!: () => void;
+    todoApi.completeTask.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+    render(<TodoModule />);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Complete Finish the report" }));
+    expect(screen.getByRole("checkbox", { name: "Reopen Finish the report" })).toHaveAttribute("aria-checked", "true");
+    expect(todoApi.days).toHaveBeenCalledTimes(1);
+    finish();
+    await vi.waitFor(() => expect(todoApi.days).toHaveBeenCalledTimes(2));
+    expect(todoApi.days).toHaveBeenLastCalledWith(false);
+  });
+
+  it("puts a failed check-off back", async () => {
+    todoApi.completeTask.mockRejectedValue(new Error("Database unavailable"));
+    todoApi.days.mockResolvedValueOnce(feed).mockRejectedValue(new Error("offline"));
+    render(<TodoModule />);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Complete Finish the report" }));
+    expect(await screen.findByRole("checkbox", { name: "Complete Finish the report" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("reloads once after quick changes in a row and keeps them all on screen", async () => {
+    const finishers: (() => void)[] = [];
+    todoApi.completeTask.mockImplementation(() => new Promise<void>((resolve) => finishers.push(resolve)));
+    render(<TodoModule />);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Complete Finish the report" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Complete Call the bank" }));
+    finishers[0]();
+    await vi.waitFor(() => expect(todoApi.completeTask).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("checkbox", { name: "Reopen Call the bank" })).toBeInTheDocument();
+    expect(todoApi.days).toHaveBeenCalledTimes(1);
+    finishers[1]();
+    await vi.waitFor(() => expect(todoApi.days).toHaveBeenCalledTimes(2));
+  });
+
+  it("moves a task on screen right away and back when saving fails", async () => {
+    let fail!: (e: Error) => void;
+    todoApi.updateTask.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    todoApi.days.mockResolvedValueOnce(feed).mockRejectedValue(new Error("offline"));
+    render(<TodoModule />);
+    const overdue = await screen.findByRole("region", { name: /^Monday/ });
+    await userEvent.click(within(overdue).getByRole("button", { name: "To inbox" }));
+    expect(within(card(/Inbox/)).getByText("Call the bank")).toBeInTheDocument();
+    fail(new Error("Database unavailable"));
+    expect(await screen.findByText("Database unavailable")).toBeInTheDocument();
+    expect(within(card(/Inbox/)).queryByText("Call the bank")).not.toBeInTheDocument();
+  });
+
   it("moves overdue tasks to today or the inbox", async () => {
     render(<TodoModule />);
     const overdue = await screen.findByRole("region", { name: /^Monday/ });

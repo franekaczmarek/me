@@ -9,7 +9,8 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 export const localToday = () => dayOf(new Date());
 
 export const todoApi = {
-  days: () => api<DaysFeed>(`/todo/days?today=${localToday()}`),
+  /** `sync: false` skips creating routine occurrences (not needed right after a change). */
+  days: (sync = true) => api<DaysFeed>(`/todo/days?today=${localToday()}${sync ? "" : "&sync=false"}`),
   /** Tasks planned in [start, end] (for the calendar). */
   tasks: (start: string, end: string) => api<Task[]>(`/todo/tasks?start=${start}&end=${end}`),
   createTask: (input: Partial<TaskInput> & { title: string }) => api<Task>("/todo/tasks", json("POST", input)),

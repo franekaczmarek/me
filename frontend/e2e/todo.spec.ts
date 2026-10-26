@@ -62,6 +62,48 @@ test("a user plans, completes and reschedules tasks", async ({ page, request }) 
   }
 });
 
+test("checking off shows at once, even on a slow connection, and is saved", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const tag = `e2e-${Date.now()}`;
+  const fast = await (await api.post("/todo/tasks", { title: `${tag} fast`, planned_date: localDay() })).json();
+  const twice = await (await api.post("/todo/tasks", { title: `${tag} twice`, planned_date: localDay() })).json();
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const today = page.getByRole("region", { name: /^Today/ });
+    await expect(today.getByText(`${tag} fast`)).toBeVisible();
+
+    // The server takes 3 s to answer; the check mark doesn't wait for it.
+    await page.route("**/todo/tasks/*/complete", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.continue();
+    });
+    await today.getByRole("checkbox", { name: `Complete ${tag} fast` }).click();
+    await expect(today.getByRole("checkbox", { name: `Reopen ${tag} fast` })).toBeVisible({ timeout: 1000 });
+    await page.unroute("**/todo/tasks/*/complete");
+
+    // Checked off and reopened quickly in a row: the last click wins.
+    await today.getByRole("checkbox", { name: `Complete ${tag} twice` }).click();
+    await today.getByRole("checkbox", { name: `Reopen ${tag} twice` }).click();
+    await expect(today.getByRole("checkbox", { name: `Complete ${tag} twice` })).toBeVisible();
+
+    await expect
+      .poll(async () => (await (await api.get(`/todo/days?today=${localDay()}&sync=false`)).json()).days
+        .flatMap((d: { tasks: { id: string; status: string }[] }) => d.tasks)
+        .filter((t: { id: string }) => t.id === fast.id || t.id === twice.id)
+        .map((t: { id: string; status: string }) => `${t.id === fast.id ? "fast" : "twice"}:${t.status}`)
+        .sort(), { timeout: 10_000 })
+      .toEqual(["fast:done", "twice:open"]);
+    await page.reload();
+    await expect(today.getByRole("checkbox", { name: `Reopen ${tag} fast` })).toBeVisible();
+    await expect(today.getByRole("checkbox", { name: `Complete ${tag} twice` })).toBeVisible();
+  } finally {
+    await api.delete(`/todo/tasks/${fast.id}`);
+    await api.delete(`/todo/tasks/${twice.id}`);
+  }
+});
+
 test("a user adds a routine that shows up on its days, and sees statistics", async ({ page, request }) => {
   await logIn(page);
   const api = await apiClient(page, request);
