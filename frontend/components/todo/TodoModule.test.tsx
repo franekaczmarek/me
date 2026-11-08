@@ -11,6 +11,7 @@ const todoApi = vi.hoisted(() => ({
   completeTask: vi.fn(),
   reopenTask: vi.fn(),
   deleteTask: vi.fn(),
+  skipTask: vi.fn(),
   stats: vi.fn(),
   routines: vi.fn(),
   parse: vi.fn(),
@@ -76,7 +77,7 @@ beforeEach(() => {
     days: 30, done: 0, on_time: 0, late: 0, overdue: 0, missed: 0,
     on_time_rate: null, avg_postponed: null, streak: 0, last_week: [],
   });
-  for (const fn of [todoApi.createTask, todoApi.updateTask, todoApi.completeTask, todoApi.reopenTask, todoApi.deleteTask]) {
+  for (const fn of [todoApi.createTask, todoApi.updateTask, todoApi.completeTask, todoApi.reopenTask, todoApi.deleteTask, todoApi.skipTask]) {
     fn.mockResolvedValue(undefined);
   }
 });
@@ -213,6 +214,15 @@ describe("TodoModule", () => {
     expect(todoApi.completeTask).toHaveBeenCalledWith("gym");
     expect(within(past).getByRole("checkbox", { name: "Reopen Workout" })).toBeInTheDocument();
     expect(within(past).getByText("2/2 done")).toBeInTheDocument();
+  });
+
+  it("marks a past task as not done so it leaves the list", async () => {
+    render(<TodoModule />);
+    const overdue = await screen.findByRole("region", { name: /^Monday/ });
+    todoApi.days.mockResolvedValue({ ...feed, days: feed.days.slice(1) });
+    await userEvent.click(within(overdue).getByRole("button", { name: "Didn't do Call the bank" }));
+    expect(todoApi.skipTask).toHaveBeenCalledWith("late");
+    expect(screen.queryByText("Call the bank")).not.toBeInTheDocument();
   });
 
   it("quick-adds to a day and to the inbox", async () => {

@@ -260,6 +260,21 @@ def test_reopen(api: TestClient, fake_db: FakeSupabase) -> None:
     assert fake_db.last_json == {"status": "open", "completed_at": None}
 
 
+def test_skip_marks_an_open_task_missed(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [{**TASK_ROW, "status": "missed"}])
+    response = api.post(f"/todo/tasks/{TASK_ID}/skip")
+    assert response.status_code == 200
+    assert response.json()["status"] == "missed"
+    assert fake_db.last_json == {"status": "missed", "completed_at": None}
+    [patch] = requests_to(fake_db, "/rest/v1/todo_tasks", "PATCH")
+    assert patch.url.params["status"] == "eq.open"
+
+
+def test_skip_a_missing_or_done_task_is_404(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [])
+    assert api.post(f"/todo/tasks/{TASK_ID}/skip").status_code == 404
+
+
 def test_delete_a_task(api: TestClient, fake_db: FakeSupabase) -> None:
     fake_db.reply(200, [])  # not a routine occurrence
     fake_db.reply(200, [{"id": TASK_ID}])

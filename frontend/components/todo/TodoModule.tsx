@@ -103,6 +103,11 @@ export function TodoModule() {
           : withStatus(f, task.id, "done", completionTime(task, f.today)),
       undo: (f) => withStatus(f, task.id, task.status, task.completed_at),
     });
+  const skip = (task: Task) =>
+    act(() => todoApi.skipTask(task.id), {
+      apply: (f) => withStatus(f, task.id, "missed", null),
+      undo: (f) => withStatus(f, task.id, task.status, task.completed_at),
+    });
   const move = (task: Task, plannedDate: string | null) =>
     act(() => todoApi.updateTask(task.id, { planned_date: plannedDate }), {
       apply: (f) => withMove(f, task.id, plannedDate),
@@ -159,6 +164,7 @@ export function TodoModule() {
                 onToggle={toggle}
                 onOpen={open}
                 onMove={move}
+                onSkip={skip}
                 onAdd={add}
               />
             ))}

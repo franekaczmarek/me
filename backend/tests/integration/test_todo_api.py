@@ -108,6 +108,14 @@ def test_ticking_off_a_past_task_counts_on_its_day(api: TestClient) -> None:
     assert (stats["on_time"], stats["late"]) == (1, 0)
 
 
+def test_marking_a_past_task_not_done_hides_it_and_counts_it_missed(api: TestClient) -> None:
+    task = create(api, title="Forgot", planned_date=iso(-2))
+    assert api.post(f"/todo/tasks/{task['id']}/skip").json()["status"] == "missed"
+    assert iso(-2) not in [d["date"] for d in feed(api)["days"]]
+    assert api.get("/todo/stats", params={"today": iso()}).json()["missed"] == 1
+    assert api.post(f"/todo/tasks/{task['id']}/skip").status_code == 404  # already skipped
+
+
 def test_deleting_a_routine_occurrence_skips_it(api: TestClient, supa: Supa) -> None:
     supa.rest("POST", "todo_routines", json={"title": "Daily", "kind": "daily", "starts_on": "2026-01-01"})
     occurrence = next(t for d in feed(api)["days"] if d["is_today"] for t in d["tasks"])

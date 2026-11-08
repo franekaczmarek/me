@@ -10,16 +10,17 @@ export const PRIORITY_COLOR: Record<Priority, string> = { high: "#ff7a6b", norma
 type Props = {
   task: Task;
   today: string;
-  /** On a past day: offer moving it to today or back to the inbox. */
+  /** On a past day: offer moving it to today, back to the inbox, or marking it not done. */
   overdue?: boolean;
   onToggle: (task: Task) => void;
   onOpen: (task: Task) => void;
   onMove?: (task: Task, plannedDate: string | null) => void;
+  onSkip?: (task: Task) => void;
 };
 
 const chip = "rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap";
 
-export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Props) {
+export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove, onSkip }: Props) {
   const { dragging } = useDrag();
   const done = task.status === "done";
   const color = PRIORITY_COLOR[task.priority];
@@ -114,6 +115,17 @@ export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Prop
           >
             To inbox
           </button>
+          {onSkip && (
+            <button
+              type="button"
+              onClick={() => onSkip(task)}
+              aria-label={`Didn't do ${task.title}`}
+              title="Mark as not done: it leaves the list and counts as missed"
+              className={`${chip} bg-white text-[#e0475e] shadow-sm ring-1 ring-[#ffd6cf] hover:ring-[#ff7a6b] dark:bg-zinc-900 dark:text-[#ff8a7d] dark:ring-[#5a2f2a]`}
+            >
+              Didn&apos;t do it
+            </button>
+          )}
         </span>
       )}
     </li>

@@ -17,6 +17,8 @@ export const todoApi = {
   updateTask: (id: string, input: Partial<TaskInput> & { position?: number }) =>
     api<Task>(`/todo/tasks/${id}`, json("PATCH", input)),
   completeTask: (id: string) => api<Task>(`/todo/tasks/${id}/complete`, json("POST", { today: localToday() })),
+  /** Marks a task as not done: it leaves the feed and counts as missed. */
+  skipTask: (id: string) => api<Task>(`/todo/tasks/${id}/skip`, { method: "POST" }),
   reopenTask: (id: string) => api<Task>(`/todo/tasks/${id}/reopen`, { method: "POST" }),
   deleteTask: (id: string) => api<void>(`/todo/tasks/${id}`, { method: "DELETE" }),
 

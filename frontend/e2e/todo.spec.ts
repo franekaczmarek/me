@@ -81,7 +81,7 @@ test("checking off shows at once, even on a slow connection, and is saved", asyn
     });
     await today.getByRole("checkbox", { name: `Complete ${tag} fast` }).click();
     await expect(today.getByRole("checkbox", { name: `Reopen ${tag} fast` })).toBeVisible({ timeout: 1000 });
-    await page.unroute("**/todo/tasks/*/complete");
+    await page.unrouteAll({ behavior: "wait" }); // let the slow answer finish first
 
     // Checked off and reopened quickly in a row: the last click wins.
     await today.getByRole("checkbox", { name: `Complete ${tag} twice` }).click();
@@ -257,7 +257,7 @@ test("a user types tasks in plain words, reviews them and adds them", async ({ p
   }
 });
 
-test("undone tasks stay on their past day and count on that day when ticked off", async ({ page, request }) => {
+test("undone tasks stay on their past day, count on that day when ticked off, and can be marked not done", async ({ page, request }) => {
   await logIn(page);
   const api = await apiClient(page, request);
   const db = await supabaseRest(page, request);
@@ -288,6 +288,13 @@ test("undone tasks stay on their past day and count on that day when ticked off"
     const saved = await (await api.get(`/todo/tasks?start=${localDay(-1)}&end=${localDay(-1)}`)).json();
     const done = saved.find((t: { id: string }) => t.id === bills.id);
     expect(done.completed_at.slice(0, 10)).toBe(localDay(-1));
+
+    // The routine wasn't done: marking it so clears it, and with nothing left undone the day goes away.
+    await yesterday.getByRole("button", { name: `Didn't do ${tag} walk` }).click();
+    await expect(yesterday.getByText(`${tag} walk`)).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Inbox" })).toBeVisible();
+    await expect(page.getByText(`${tag} bills`)).toBeHidden();
   } finally {
     await api.delete(`/todo/tasks/${bills.id}`);
     await db.delete("todo_tasks", walk.id);

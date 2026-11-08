@@ -191,6 +191,18 @@ def reopen_task(task_id: UUID, db: SupabaseDep) -> Any:
     return one_or_404(rows, "Task")
 
 
+@router.post("/tasks/{task_id}/skip", response_model=Task)
+def skip_task(task_id: UUID, db: SupabaseDep) -> Any:
+    """Mark a task as not done (missed): it leaves the feed and counts as missed in the statistics."""
+    rows = db.rest(
+        "PATCH",
+        TASKS,
+        params={"id": f"eq.{task_id}", "status": "eq.open", "select": TASK_COLUMNS},
+        json={"status": "missed", "completed_at": None},
+    )
+    return one_or_404(rows, "Open task")
+
+
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: UUID, db: SupabaseDep) -> Response:
     """Deletes a task. A routine occurrence is skipped instead (marked missed), so it isn't re-created."""

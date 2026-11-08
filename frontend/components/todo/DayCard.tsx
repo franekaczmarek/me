@@ -13,12 +13,15 @@ type Props = {
   onToggle: (task: Task) => void;
   onOpen: (task: Task) => void;
   onMove: (task: Task, plannedDate: string | null) => void;
+  onSkip: (task: Task) => void;
   onAdd: (title: string, plannedDate: string) => Promise<void>;
   ref?: React.Ref<HTMLElement>;
 };
 
 /** One day: name + date, how full it is, its tasks and a quick-add line. */
-export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Props) {
+export function DayCard({ day, today, onToggle, onOpen, onMove, onSkip, onAdd, ref }: Props) {
+  // Tasks marked not done leave the card at once.
+  const tasks = day.tasks.filter((t) => t.status !== "missed");
   const { name, date } = dayTitle(day.date, today);
   // Events outside work hours take task time too.
   const used = day.planned_min + day.event_min;
@@ -26,7 +29,7 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
   const share = (minutes: number) => (day.capacity_min ? Math.min(1, minutes / day.capacity_min) : minutes ? 1 : 0);
   const eventFill = share(day.event_min);
   const taskFill = Math.min(1 - eventFill, share(day.planned_min));
-  const done = day.tasks.filter((t) => t.status === "done").length;
+  const done = tasks.filter((t) => t.status === "done").length;
   // Tasks can be dropped on today and later days, not on past ones.
   const isOver = useIsOver(day.date);
 
@@ -60,9 +63,9 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
           )}
         </div>
         <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-zinc-400">
-          {day.tasks.length > 0 && (
+          {tasks.length > 0 && (
             <span>
-              {done}/{day.tasks.length} done
+              {done}/{tasks.length} done
             </span>
           )}
           {!day.is_overdue && (
@@ -118,9 +121,9 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
         </ul>
       )}
 
-      {day.tasks.length > 0 && (
+      {tasks.length > 0 && (
         <ul className="mt-2 flex flex-col">
-          {day.tasks.map((task) => (
+          {tasks.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -129,6 +132,7 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
               onToggle={onToggle}
               onOpen={onOpen}
               onMove={onMove}
+              onSkip={onSkip}
             />
           ))}
         </ul>
