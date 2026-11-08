@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 from app.calendar.capacity import DEFAULT_SCHEDULE, DayOff
-from app.todo.days import build_days
+from app.todo.days import build_days, missed_before
 from app.todo.schemas import Task
 
 TODAY = date(2026, 3, 4)  # Wednesday
@@ -52,18 +52,29 @@ def test_later_days_up_to_two_weeks_only_when_something_is_planned() -> None:
     assert len(days) == 8
 
 
-def test_overdue_days_come_first_with_only_undone_tasks() -> None:
+def test_overdue_days_come_first_and_keep_their_done_tasks() -> None:
     days, _ = build(
         [
             task("Old undone", TODAY - timedelta(5)),
-            task("Yesterday undone", TODAY - timedelta(1)),
+            task("Yesterday undone", TODAY - timedelta(1), position=1),
             task("Yesterday done", TODAY - timedelta(1), status="done", completed_at=CREATED),
             task("Past done", TODAY - timedelta(3), status="done", completed_at=CREATED),
         ]
     )
+    # A past day where everything is done isn't shown.
     assert day_dates(days)[:3] == [TODAY - timedelta(5), TODAY - timedelta(1), TODAY]
     assert days[0].is_overdue and days[1].is_overdue and not days[2].is_overdue
-    assert [t.title for t in days[1].tasks] == ["Yesterday undone"]
+    assert [t.title for t in days[1].tasks] == ["Yesterday done", "Yesterday undone"]
+
+
+def test_undone_routine_occurrences_stay_on_their_past_day() -> None:
+    days, _ = build([task("Workout", TODAY - timedelta(2), routine_id=uuid4(), occurrence_date=TODAY - timedelta(2))])
+    assert days[0].date == TODAY - timedelta(2)
+    assert [t.title for t in days[0].tasks] == ["Workout"]
+
+
+def test_missed_before_is_a_week_back() -> None:
+    assert missed_before(TODAY) == TODAY - timedelta(7)
 
 
 def test_done_tasks_stay_visible_today_and_later() -> None:

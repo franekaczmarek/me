@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiClient, logIn, requireTestUser } from "./helpers";
+import { apiClient, logIn, requireTestUser, supabaseRest } from "./helpers";
 
 // To-do UI on the real stack. Tasks are tagged and removed afterwards.
 test.beforeEach(() => requireTestUser());
@@ -254,5 +254,43 @@ test("a user types tasks in plain words, reviews them and adds them", async ({ p
     const feed = await (await api.get(`/todo/days?today=${localDay()}`)).json();
     const all = [...feed.inbox, ...feed.days.flatMap((d: { tasks: unknown[] }) => d.tasks)] as { id: string; title: string }[];
     for (const t of all.filter((t) => t.title.startsWith(tag))) await api.delete(`/todo/tasks/${t.id}`);
+  }
+});
+
+test("undone tasks stay on their past day and count on that day when ticked off", async ({ page, request }) => {
+  await logIn(page);
+  const api = await apiClient(page, request);
+  const db = await supabaseRest(page, request);
+  const tag = `e2e-${Date.now()}`;
+  // A paused routine with an undone occurrence yesterday, and a regular task from yesterday.
+  const routine = await db.insert("todo_routines", { title: `${tag} walk`, kind: "daily", starts_on: localDay(-5), active: false });
+  const walk = await db.insert("todo_tasks", {
+    title: `${tag} walk`,
+    routine_id: routine.id,
+    occurrence_date: localDay(-1),
+    planned_date: localDay(-1),
+  });
+  const bills = await (await api.post("/todo/tasks", { title: `${tag} bills`, planned_date: localDay(-1) })).json();
+
+  try {
+    await page.getByRole("link", { name: "To-do" }).click();
+    const yesterday = page.getByRole("region", { name: /^Yesterday/ });
+    await expect(yesterday.getByText(`${tag} walk`)).toBeVisible();
+    await expect(yesterday.getByText(`${tag} bills`)).toBeVisible();
+
+    await yesterday.getByRole("checkbox", { name: `Complete ${tag} bills` }).click();
+    await expect(yesterday.getByRole("checkbox", { name: `Reopen ${tag} bills` })).toBeVisible();
+
+    // After a reload it is still there, ticked, next to the undone routine.
+    await page.reload();
+    await expect(yesterday.getByRole("checkbox", { name: `Reopen ${tag} bills` })).toBeVisible();
+    await expect(yesterday.getByRole("checkbox", { name: `Complete ${tag} walk` })).toBeVisible();
+    const saved = await (await api.get(`/todo/tasks?start=${localDay(-1)}&end=${localDay(-1)}`)).json();
+    const done = saved.find((t: { id: string }) => t.id === bills.id);
+    expect(done.completed_at.slice(0, 10)).toBe(localDay(-1));
+  } finally {
+    await api.delete(`/todo/tasks/${bills.id}`);
+    await db.delete("todo_tasks", walk.id);
+    await db.delete("todo_routines", routine.id);
   }
 });

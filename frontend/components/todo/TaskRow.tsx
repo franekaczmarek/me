@@ -98,7 +98,7 @@ export function TaskRow({ task, today, overdue, onToggle, onOpen, onMove }: Prop
         </span>
       )}
 
-      {overdue && onMove && (
+      {overdue && onMove && task.status !== "done" && (
         <span className="flex gap-1">
           <button
             type="button"

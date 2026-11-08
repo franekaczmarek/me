@@ -10,12 +10,19 @@ from app.todo.schemas import Day, EventChip, Task
 WEEK_AHEAD = 6
 #: Further days are shown only when something is planned on them.
 HORIZON = 13
+#: Undone routine occurrences stay on their past day this long, then they count as missed.
+PAST_DAYS = 7
 
 _PRIORITY = {"high": 0, "normal": 1, "low": 2}
 
 
 def window_end(today: date) -> date:
     return today + timedelta(days=HORIZON)
+
+
+def missed_before(today: date) -> date:
+    """Undone routine occurrences planned before this day are missed."""
+    return today - timedelta(days=PAST_DAYS)
 
 
 def _day_order(task: Task) -> tuple:
@@ -40,7 +47,8 @@ def build_days(
 ) -> tuple[list[Day], list[Task]]:
     """Overdue days (oldest first), today, the next 6 days, then later days up to 2 weeks that have tasks.
 
-    Missed routine occurrences are not shown; past days only show undone tasks. Calendar events show on
+    Missed routine occurrences are not shown. A past day is shown while it has an undone task, together with
+    the tasks already done on it (ticked off late, they still count on that day). Calendar events show on
     their days (already sorted: all-day first, then by time) and take away task time.
     """
     events = events or []
@@ -53,12 +61,11 @@ def build_days(
             if task.status == "open":
                 inbox.append(task)
         elif task.planned_date < today:
-            if task.status == "open":
-                by_day.setdefault(task.planned_date, []).append(task)
+            by_day.setdefault(task.planned_date, []).append(task)
         elif task.planned_date <= window_end(today):
             by_day.setdefault(task.planned_date, []).append(task)
 
-    shown = sorted(d for d in by_day if d < today)
+    shown = sorted(d for d in by_day if d < today and any(t.status == "open" for t in by_day[d]))
     shown += [today + timedelta(days=n) for n in range(WEEK_AHEAD + 1)]
     shown += sorted(d for d in by_day if d > today + timedelta(days=WEEK_AHEAD))
 

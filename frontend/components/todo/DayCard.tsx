@@ -59,41 +59,43 @@ export function DayCard({ day, today, onToggle, onOpen, onMove, onAdd, ref }: Pr
             <span className="rounded-full bg-[#f2c14e]/20 px-2 py-0.5 text-[11px] font-medium text-[#9a7414]">Day off</span>
           )}
         </div>
-        {!day.is_overdue && (
-          <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-zinc-400">
-            {day.tasks.length > 0 && (
-              <span>
-                {done}/{day.tasks.length} done
-              </span>
-            )}
-            <span
-              className={over ? "font-semibold text-[#e0574a]" : undefined}
-              title={day.event_min ? `Tasks ${formatMinutes(day.planned_min)} + events ${formatMinutes(day.event_min)}` : undefined}
-            >
-              {formatMinutes(used)} of {formatMinutes(day.capacity_min)}
+        <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-zinc-400">
+          {day.tasks.length > 0 && (
+            <span>
+              {done}/{day.tasks.length} done
             </span>
-            <span
-              role="meter"
-              aria-label="Planned time"
-              aria-valuemin={0}
-              aria-valuemax={day.capacity_min}
-              aria-valuenow={used}
-              className="flex h-2 w-20 overflow-hidden rounded-full bg-stone-100 dark:bg-zinc-800"
-            >
-              {eventFill > 0 && (
-                <span
-                  data-testid="event-time"
-                  className="block h-full transition-[width] duration-300"
-                  style={{ width: `${eventFill * 100}%`, background: over ? "#ff7a6b" : "#9b87f5" }}
-                />
-              )}
+          )}
+          {!day.is_overdue && (
+            <>
               <span
-                className="block h-full rounded-r-full transition-[width] duration-300"
-                style={{ width: `${taskFill * 100}%`, background: over ? "#ff7a6b" : "#4cc9a0" }}
-              />
-            </span>
-          </div>
-        )}
+                className={over ? "font-semibold text-[#e0574a]" : undefined}
+                title={day.event_min ? `Tasks ${formatMinutes(day.planned_min)} + events ${formatMinutes(day.event_min)}` : undefined}
+              >
+                {formatMinutes(used)} of {formatMinutes(day.capacity_min)}
+              </span>
+              <span
+                role="meter"
+                aria-label="Planned time"
+                aria-valuemin={0}
+                aria-valuemax={day.capacity_min}
+                aria-valuenow={used}
+                className="flex h-2 w-20 overflow-hidden rounded-full bg-stone-100 dark:bg-zinc-800"
+              >
+                {eventFill > 0 && (
+                  <span
+                    data-testid="event-time"
+                    className="block h-full transition-[width] duration-300"
+                    style={{ width: `${eventFill * 100}%`, background: over ? "#ff7a6b" : "#9b87f5" }}
+                  />
+                )}
+                <span
+                  className="block h-full rounded-r-full transition-[width] duration-300"
+                  style={{ width: `${taskFill * 100}%`, background: over ? "#ff7a6b" : "#4cc9a0" }}
+                />
+              </span>
+            </>
+          )}
+        </div>
       </header>
 
       {day.events.length > 0 && (

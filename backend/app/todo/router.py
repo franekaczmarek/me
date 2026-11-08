@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.calendar.router import MAX_RANGE_DAYS, load_days_off, load_occurrences, load_schedule
 from app.core.supabase import Supabase, SupabaseDep, one_or_404, parallel
-from app.todo.days import build_days, window_end
+from app.todo.days import build_days, missed_before, window_end
 from app.todo.recurrence import Rule, occurrences
 from app.todo.schemas import TASK_COLUMNS, DaysFeed, Task, TaskCreate, TaskUpdate, task_row
 
@@ -65,11 +65,12 @@ def read_days(
 ) -> DaysFeed:
     """Overdue days, today, the coming week and planned days up to 2 weeks ahead, plus the inbox.
 
-    Also syncs routines: creates their missing occurrences and marks past undone ones as missed.
+    Also syncs routines: creates their missing occurrences and marks undone ones older than a week as missed.
     Everything is read at once and written only when something changed (about once a day).
     """
     day = _today(today)
     end = window_end(day)
+    week_ago = missed_before(day)
     routines, rows, schedule, events = parallel(
         lambda: db.rest("GET", ROUTINES, params={"select": ROUTINE_COLUMNS, "active": "eq.true"}) if sync else [],
         lambda: db.rest(
@@ -80,7 +81,9 @@ def read_days(
                 # Skipped (missed) occurrences in the window are read too, so they aren't re-created.
                 "or": (
                     f"(and(planned_date.is.null,status.neq.missed),and(planned_date.gte.{day},planned_date.lte.{end}),"
-                    f"and(planned_date.lt.{day},status.eq.open))"
+                    f"and(planned_date.lt.{day},status.eq.open),"
+                    # Done tasks of past days are shown next to the undone ones there.
+                    f"and(planned_date.gte.{week_ago},planned_date.lt.{day},status.eq.done))"
                 ),
             },
         ),
@@ -89,12 +92,12 @@ def read_days(
     )
 
     def past_routine_task(r: dict[str, Any]) -> bool:
-        return sync and r["routine_id"] is not None and r["planned_date"] is not None and r["planned_date"] < str(day)
+        return sync and r["routine_id"] is not None and r["planned_date"] is not None and r["planned_date"] < str(week_ago)
 
     existing = {(r["routine_id"], r["occurrence_date"]) for r in rows if r["routine_id"]}
     # Occurrences the user moved beyond the window look missing too; inserting them again is a no-op.
     missing = [o for o in routine_occurrences(routines, day) if (o["routine_id"], o["occurrence_date"]) not in existing]
-    missed = any(past_routine_task(r) for r in rows)
+    missed = any(past_routine_task(r) and r["status"] == "open" for r in rows)
     tasks = [Task(**r) for r in rows if r["status"] != "missed" and not past_routine_task(r)]
     # Overdue days are shown too, so days off are needed from the oldest of them.
     first = min([t.planned_date for t in tasks if t.planned_date] + [day])
@@ -116,7 +119,7 @@ def read_days(
             lambda: db.rest(
                 "PATCH",
                 TASKS,
-                params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{day}"},
+                params={"routine_id": "not.is.null", "status": "eq.open", "planned_date": f"lt.{week_ago}"},
                 json={"status": "missed"},
                 prefer="return=minimal",
             )
@@ -163,11 +166,16 @@ def update_task(task_id: UUID, body: TaskUpdate, db: SupabaseDep) -> Any:
 
 @router.post("/tasks/{task_id}/complete", response_model=Task)
 def complete_task(task_id: UUID, db: SupabaseDep, body: CompleteBody | None = None) -> Any:
-    """Mark done now. A task done from the inbox is recorded on the day it was done."""
+    """Mark done. A task done from the inbox is recorded on the day it was done; one ticked off on a past
+    day counts as done on that day."""
     task = one_or_404(db.rest("GET", TASKS, params={"id": f"eq.{task_id}", "select": "planned_date"}), "Task")
+    today = _today(body.today if body else None)
     changes: dict[str, Any] = {"status": "done", "completed_at": datetime.now(UTC).isoformat()}
     if task["planned_date"] is None:
-        changes["planned_date"] = _today(body.today if body else None).isoformat()
+        changes["planned_date"] = today.isoformat()
+    elif task["planned_date"] < today.isoformat():
+        # Noon UTC keeps the planned date as the completion day.
+        changes["completed_at"] = f"{task['planned_date']}T12:00:00+00:00"
     rows = db.rest("PATCH", TASKS, params={"id": f"eq.{task_id}", "select": TASK_COLUMNS}, json=changes)
     return one_or_404(rows, "Task")
 

@@ -80,7 +80,8 @@ def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
         [
             TASK_ROW,
             {**TASK_ROW, "id": "77777777-7777-7777-7777-777777777777", "planned_date": None},
-            occurrence_row("2026-03-02"),  # a past routine occurrence not done → missed
+            occurrence_row("2026-03-02"),  # undone 2 days ago: stays on its day
+            occurrence_row("2026-02-24"),  # undone more than a week ago → missed
         ],
     )
     fake_db.reply(200, [])  # schedule: defaults
@@ -93,18 +94,21 @@ def test_days_feed(api: TestClient, fake_db: FakeSupabase) -> None:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["today"] == "2026-03-04"
-    assert [d["date"] for d in body["days"]][:2] == ["2026-03-04", "2026-03-05"]
-    assert body["days"][0]["is_today"] and body["days"][0]["planned_min"] == 15
-    assert body["days"][0]["capacity_min"] == 180
-    assert [t["title"] for t in body["days"][0]["tasks"]] == ["Pay rent"]
+    past, today = body["days"][:2]
+    assert [d["date"] for d in body["days"]][:3] == ["2026-03-02", "2026-03-04", "2026-03-05"]
+    assert past["is_overdue"] and [t["title"] for t in past["tasks"]] == ["Workout"]
+    assert today["is_today"] and today["planned_min"] == 15
+    assert today["capacity_min"] == 180
+    assert [t["title"] for t in today["tasks"]] == ["Pay rent"]
     assert len(body["inbox"]) == 1
-    assert "Workout" not in response.text  # the missed occurrence isn't shown as overdue
+    assert "2026-02-24" not in response.text  # the missed occurrence isn't shown
 
     [tasks_query] = requests_to(fake_db, "/rest/v1/todo_tasks", "GET")
     assert "status" not in tasks_query.url.params
     assert "and(planned_date.is.null,status.neq.missed)" in tasks_query.url.params["or"]
+    assert "and(planned_date.gte.2026-02-25,planned_date.lt.2026-03-04,status.eq.done)" in tasks_query.url.params["or"]
     [missed] = requests_to(fake_db, "/rest/v1/todo_tasks", "PATCH")
-    assert missed.url.params["planned_date"] == "lt.2026-03-04"
+    assert missed.url.params["planned_date"] == "lt.2026-02-25"
     assert missed.url.params["routine_id"] == "not.is.null"
     assert json.loads(missed.content) == {"status": "missed"}
     assert requests_to(fake_db, "/rest/v1/todo_tasks", "POST") == []
@@ -236,6 +240,14 @@ def test_completing_from_the_inbox_records_the_day(api: TestClient, fake_db: Fak
     fake_db.reply(200, [{**TASK_ROW, "status": "done", "completed_at": "2026-03-04T18:00:00+00:00"}])
     api.post(f"/todo/tasks/{TASK_ID}/complete", json={"today": "2026-03-04"})
     assert fake_db.last_json["planned_date"] == "2026-03-04"
+
+
+def test_completing_a_past_task_counts_on_its_day(api: TestClient, fake_db: FakeSupabase) -> None:
+    fake_db.reply(200, [{"planned_date": "2026-03-02"}])
+    fake_db.reply(200, [{**TASK_ROW, "status": "done", "completed_at": "2026-03-02T12:00:00+00:00"}])
+    api.post(f"/todo/tasks/{TASK_ID}/complete", json={"today": "2026-03-04"})
+    assert fake_db.last_json["completed_at"] == "2026-03-02T12:00:00+00:00"
+    assert "planned_date" not in fake_db.last_json
 
 
 def test_complete_missing_task_is_404(api: TestClient, fake_db: FakeSupabase) -> None:

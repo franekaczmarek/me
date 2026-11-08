@@ -198,6 +198,23 @@ describe("TodoModule", () => {
     expect(todoApi.updateTask).toHaveBeenLastCalledWith("late", { planned_date: null });
   });
 
+  it("keeps a task ticked off on a past day there, done on that day", async () => {
+    const workout = task({ id: "gym", title: "Workout", planned_date: "2026-03-02", routine_id: "r1" });
+    const paid = task({ id: "paid", title: "Pay rent", planned_date: "2026-03-02", status: "done", completed_at: "2026-03-02T12:00:00+00:00" });
+    todoApi.days.mockResolvedValue({ ...feed, days: [day("2026-03-02", { tasks: [workout, paid] }), day(TODAY)] });
+    render(<TodoModule />);
+    const past = await screen.findByRole("region", { name: /^Monday/ });
+    expect(within(past).getByText("1/2 done")).toBeInTheDocument();
+    expect(within(past).getAllByRole("button", { name: "Move to today" })).toHaveLength(1); // not for the done one
+
+    const saved = { ...workout, status: "done" as const, completed_at: "2026-03-02T12:00:00+00:00" };
+    todoApi.days.mockResolvedValue({ ...feed, days: [day("2026-03-02", { tasks: [saved, paid] }), day(TODAY)] });
+    await userEvent.click(within(past).getByRole("checkbox", { name: "Complete Workout" }));
+    expect(todoApi.completeTask).toHaveBeenCalledWith("gym");
+    expect(within(past).getByRole("checkbox", { name: "Reopen Workout" })).toBeInTheDocument();
+    expect(within(past).getByText("2/2 done")).toBeInTheDocument();
+  });
+
   it("quick-adds to a day and to the inbox", async () => {
     render(<TodoModule />);
     await userEvent.type(await screen.findByLabelText("Add a task on Tomorrow"), "Gym{Enter}");

@@ -7,6 +7,11 @@ const mapTasks = (feed: DaysFeed, fn: (tasks: Task[]) => Task[]): DaysFeed => ({
   inbox: fn(feed.inbox),
 });
 
+/** When a task ticked off now counts as done: on its day if that day is past (noon UTC keeps the date), else now. */
+export function completionTime(task: Pick<Task, "planned_date">, today: string, now = new Date()): string {
+  return task.planned_date && task.planned_date < today ? `${task.planned_date}T12:00:00+00:00` : now.toISOString();
+}
+
 /** The feed with one task's status (and completion time) changed. */
 export function withStatus(feed: DaysFeed, id: string, status: Task["status"], completedAt: string | null): DaysFeed {
   return mapTasks(feed, (tasks) =>

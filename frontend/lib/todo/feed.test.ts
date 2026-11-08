@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withMove, withStatus } from "./feed";
+import { completionTime, withMove, withStatus } from "./feed";
 import type { Day, DaysFeed, Task } from "./types";
 
 const task = (id: string, planned_date: string | null): Task => ({
@@ -73,5 +73,17 @@ describe("withMove", () => {
   it("leaves the feed alone when the day isn't shown or the task is unknown", () => {
     expect(withMove(feed, "a", "2026-04-01")).toBe(feed);
     expect(withMove(feed, "nope", null)).toBe(feed);
+  });
+});
+
+describe("completionTime", () => {
+  const now = new Date("2026-03-04T18:30:00Z");
+  it("counts a past day's task on that day", () => {
+    expect(completionTime(task("a", "2026-03-02"), "2026-03-04", now)).toBe("2026-03-02T12:00:00+00:00");
+  });
+  it("uses now for today, later days and the inbox", () => {
+    for (const planned of ["2026-03-04", "2026-03-06", null]) {
+      expect(completionTime(task("a", planned), "2026-03-04", now)).toBe(now.toISOString());
+    }
   });
 });

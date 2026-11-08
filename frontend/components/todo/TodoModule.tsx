@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Message } from "@/components/ui";
 import { todoApi } from "@/lib/todo/api";
-import { withMove, withStatus } from "@/lib/todo/feed";
+import { completionTime, withMove, withStatus } from "@/lib/todo/feed";
 import type { DaysFeed, Task, TaskInput } from "@/lib/todo/types";
 import { DayCard } from "./DayCard";
 import { DragProvider, DropZone, INBOX } from "./dnd";
@@ -100,7 +100,7 @@ export function TodoModule() {
       apply: (f) =>
         task.status === "done"
           ? withStatus(f, task.id, "open", null)
-          : withStatus(f, task.id, "done", new Date().toISOString()),
+          : withStatus(f, task.id, "done", completionTime(task, f.today)),
       undo: (f) => withStatus(f, task.id, task.status, task.completed_at),
     });
   const move = (task: Task, plannedDate: string | null) =>

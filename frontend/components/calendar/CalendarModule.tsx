@@ -8,6 +8,7 @@ import { formatTime, fullDay, longDay, monthTitle, weekTitle } from "@/lib/calen
 import { addMonths, minutesOf, monthGrid, onDay, startOfMonth, startOfWeek, timeOf } from "@/lib/calendar/grid";
 import type { CalendarEvent, EventInput, Occurrence, Summary } from "@/lib/calendar/types";
 import { localToday, todoApi } from "@/lib/todo/api";
+import { completionTime } from "@/lib/todo/feed";
 import { addDays, daysBetween } from "@/lib/todo/format";
 import type { Task, TaskInput } from "@/lib/todo/types";
 import { DragProvider } from "@/components/todo/dnd";
@@ -200,7 +201,7 @@ export function CalendarModule() {
       (t) =>
         task.status === "done"
           ? { ...t, status: "open", completed_at: null }
-          : { ...t, status: "done", completed_at: new Date().toISOString() },
+          : { ...t, status: "done", completed_at: completionTime(task, localToday()) },
       () => (task.status === "done" ? todoApi.reopenTask(task.id) : todoApi.completeTask(task.id)),
     );
 

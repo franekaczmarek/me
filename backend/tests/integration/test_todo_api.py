@@ -45,7 +45,7 @@ def test_days_feed_shows_overdue_today_week_and_inbox(api: TestClient) -> None:
     assert iso(-2) in dates  # still has an undone task
     assert dates[dates.index(iso()) : dates.index(iso()) + 7] == [iso(n) for n in range(7)]
     assert dates[-1] == iso(10) and iso(20) not in dates
-    assert titles_on(body, iso(-2)) == ["Old done"]
+    assert sorted(titles_on(body, iso(-2))) == ["Done before", "Old done"]
     assert titles_on(body, iso()) == ["Today"]
     today = next(d for d in body["days"] if d["is_today"])
     assert (today["planned_min"], today["capacity_min"], today["is_work_day"]) == (30, 180, True)
@@ -70,7 +70,7 @@ def test_completing_an_inbox_task_dates_it(api: TestClient) -> None:
     assert done["planned_date"] == iso()
 
 
-def test_routines_create_occurrences_and_missed_ones_are_hidden(api: TestClient, supa: Supa) -> None:
+def test_routines_create_occurrences_and_old_missed_ones_are_hidden(api: TestClient, supa: Supa) -> None:
     routine = supa.rest(
         "POST", "todo_routines", json={"title": "Workout", "kind": "weekly", "weekdays": [3], "starts_on": "2026-01-01"}
     ).json()[0]
@@ -81,16 +81,31 @@ def test_routines_create_occurrences_and_missed_ones_are_hidden(api: TestClient,
     # Loading again doesn't duplicate occurrences.
     assert titles_on(feed(api), iso()) == ["Workout"]
 
-    # A past undone occurrence becomes missed and disappears.
-    supa.rest(
-        "POST",
-        "todo_tasks",
-        json={"title": "Workout", "routine_id": routine["id"], "occurrence_date": iso(-7), "planned_date": iso(-7)},
-    )
+    # An undone occurrence stays on its past day for a week, then becomes missed and disappears.
+    for days_ago in (7, 8):
+        supa.rest(
+            "POST",
+            "todo_tasks",
+            json={
+                "title": "Workout",
+                "routine_id": routine["id"],
+                "occurrence_date": iso(-days_ago),
+                "planned_date": iso(-days_ago),
+            },
+        )
     body = feed(api)
-    assert iso(-7) not in [d["date"] for d in body["days"]]
-    [row] = supa.rest("GET", "todo_tasks", params={"occurrence_date": f"eq.{iso(-7)}", "select": "status"}).json()
+    assert titles_on(body, iso(-7)) == ["Workout"]
+    assert iso(-8) not in [d["date"] for d in body["days"]]
+    [row] = supa.rest("GET", "todo_tasks", params={"occurrence_date": f"eq.{iso(-8)}", "select": "status"}).json()
     assert row["status"] == "missed"
+
+
+def test_ticking_off_a_past_task_counts_on_its_day(api: TestClient) -> None:
+    task = create(api, title="Late", planned_date=iso(-2))
+    done = api.post(f"/todo/tasks/{task['id']}/complete", json={"today": iso()}).json()
+    assert done["completed_at"].startswith(iso(-2))
+    stats = api.get("/todo/stats", params={"today": iso()}).json()
+    assert (stats["on_time"], stats["late"]) == (1, 0)
 
 
 def test_deleting_a_routine_occurrence_skips_it(api: TestClient, supa: Supa) -> None:
